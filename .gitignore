@@ -1,0 +1,26 @@
+# Dependencies
+web/node_modules/
+
+# Build output
+web/.next/
+web/out/
+
+# Secrets / env (NEVER commit these)
+web/.env.local
+.env
+*.env.local
+
+# Vercel
+web/.vercel
+.vercel
+
+# Python (poller)
+poller/__pycache__/
+poller/state/
+poller/config.json
+*.pyc
+
+# Misc
+.DS_Store
+*.tsbuildinfo
+web/next-env.d.ts

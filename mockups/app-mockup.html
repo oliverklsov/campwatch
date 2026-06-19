@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CampWatch — App Mockup</title>
+<style>
+  :root {
+    --green: #2d6a4f; --green-dark: #1b4332; --green-light: #d8f3dc;
+    --amber: #e76f51; --sand: #faf6f0; --ink: #1c1917; --muted: #78716c;
+    --card: #ffffff; --line: #e7e5e4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  body { background: #292524; display: flex; gap: 40px; justify-content: center; align-items: flex-start; padding: 30px; flex-wrap: wrap; }
+  .note { color: #d6d3d1; max-width: 280px; font-size: 14px; line-height: 1.6; padding-top: 40px; }
+  .note h1 { font-size: 20px; color: #fff; margin-bottom: 12px; }
+  .note p { margin-bottom: 10px; }
+  .note kbd { background:#44403c; padding:1px 6px; border-radius:4px; }
+
+  /* Phone frame */
+  .phone { width: 390px; height: 820px; background: var(--sand); border-radius: 44px; border: 10px solid #0c0a09;
+           overflow: hidden; position: relative; box-shadow: 0 30px 80px rgba(0,0,0,.5); flex-shrink: 0; }
+  .notch { position:absolute; top:10px; left:50%; transform:translateX(-50%); width:120px; height:26px; background:#0c0a09; border-radius:20px; z-index:50; }
+
+  .screen { position: absolute; inset: 0; display: none; flex-direction: column; padding-top: 48px; }
+  .screen.active { display: flex; }
+
+  /* Tab bar */
+  .tabbar { position:absolute; bottom:0; left:0; right:0; height:78px; background:var(--card); border-top:1px solid var(--line);
+            display:flex; z-index:40; padding-bottom:14px; }
+  .tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+         font-size:10.5px; color:var(--muted); cursor:pointer; }
+  .tab .ico { font-size:22px; }
+  .tab.on { color: var(--green); font-weight:600; }
+
+  /* ===== Explore (map) ===== */
+  .map { flex:1; position:relative; overflow:hidden;
+         background: linear-gradient(160deg,#cde3c8 0%,#b7d4ae 30%,#dce8d2 55%,#c2dcc8 80%,#a9cdb4 100%); }
+  .map .ridge { position:absolute; border-radius:50%; background:rgba(125,155,118,.35); filter:blur(2px); }
+  .map .water { position:absolute; background:#9ec5dd; border-radius:40% 60% 55% 45%; opacity:.85; }
+  .map .road { position:absolute; background:repeating-linear-gradient(90deg,#b0a08a 0 14px,transparent 14px 22px); height:3px; transform:rotate(-18deg); }
+  .searchbar { position:absolute; top:14px; left:14px; right:14px; background:var(--card); border-radius:14px; padding:12px 14px;
+               box-shadow:0 4px 14px rgba(0,0,0,.12); font-size:14.5px; color:var(--muted); display:flex; gap:8px; z-index:10;}
+  .chips { position:absolute; top:64px; left:14px; right:0; display:flex; gap:8px; overflow-x:auto; z-index:10; padding-right:14px;}
+  .chip { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:6px 12px; font-size:12.5px;
+          white-space:nowrap; cursor:pointer; color:var(--ink); }
+  .chip.on { background:var(--green); color:#fff; border-color:var(--green); }
+  .pin { position:absolute; cursor:pointer; text-align:center; z-index:5; transform:translate(-50%,-100%); }
+  .pin .dot { width:34px; height:34px; border-radius:50% 50% 50% 4px; transform:rotate(-45deg); display:flex; align-items:center;
+              justify-content:center; box-shadow:0 3px 8px rgba(0,0,0,.3); border:2.5px solid #fff; }
+  .pin .dot span { transform:rotate(45deg); font-size:15px; }
+  .pin.cg .dot { background:var(--green); } .pin.fcfs .dot { background:#b08968; } .pin.disp .dot { background:#6d597a; }
+  .pin .tag { font-size:10px; font-weight:700; background:rgba(255,255,255,.92); border-radius:6px; padding:1px 5px; margin-top:3px; color:var(--ink); }
+  .legend { position:absolute; bottom:96px; left:14px; background:rgba(255,255,255,.94); border-radius:12px; padding:8px 12px;
+            font-size:11px; z-index:10; line-height:1.8; box-shadow:0 2px 8px rgba(0,0,0,.12);}
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+
+  /* Bottom sheet */
+  .sheet { position:absolute; left:0; right:0; bottom:0; background:var(--card); border-radius:22px 22px 0 0; z-index:30;
+           box-shadow:0 -8px 30px rgba(0,0,0,.22); transform:translateY(105%); transition:transform .28s ease; padding:10px 18px 96px; }
+  .sheet.open { transform:translateY(0); }
+  .grab { width:42px; height:4.5px; background:var(--line); border-radius:3px; margin:4px auto 12px; }
+  .sheet h3 { font-size:19px; } .sheet .sub { color:var(--muted); font-size:13px; margin:2px 0 10px; }
+  .badges { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;}
+  .badge { font-size:11.5px; padding:3.5px 9px; border-radius:12px; font-weight:600; }
+  .b-av { background:var(--green-light); color:var(--green-dark); } .b-fcfs { background:#fde8d7; color:#9a4a1f; }
+  .b-full { background:#fee2e2; color:#991b1b; }
+  .avrow { display:flex; gap:5px; margin:10px 0 14px; }
+  .avday { flex:1; text-align:center; border-radius:9px; padding:7px 0; font-size:11px; border:1px solid var(--line); }
+  .avday b { display:block; font-size:13px; }
+  .avday.yes { background:var(--green-light); border-color:#95d5b2; color:var(--green-dark); }
+  .avday.no  { background:#f5f5f4; color:#a8a29e; }
+  .btn { display:block; width:100%; text-align:center; background:var(--green); color:#fff; border:none; border-radius:14px;
+         padding:15px; font-size:16px; font-weight:700; cursor:pointer; }
+  .btn.sec { background:transparent; color:var(--green); border:1.5px solid var(--green); margin-top:8px; padding:12px; font-size:14px;}
+
+  /* ===== generic page ===== */
+  .page { flex:1; overflow-y:auto; padding:10px 18px 100px; }
+  .pagehead { font-size:24px; font-weight:800; margin:8px 0 14px; display:flex; justify-content:space-between; align-items:center;}
+  .pagehead .add { background:var(--green); color:#fff; border-radius:12px; font-size:13px; font-weight:600; padding:8px 13px; cursor:pointer;}
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px 16px; margin-bottom:12px; }
+  .card h4 { font-size:15.5px; } .card .meta { font-size:12.5px; color:var(--muted); margin-top:3px; line-height:1.5; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:#22c55e; margin-right:5px;
+           animation:pu 1.6s infinite; } @keyframes pu { 50% { opacity:.35; } }
+  .checked { font-size:11px; color:var(--green-dark); background:var(--green-light); padding:3px 8px; border-radius:10px; white-space:nowrap;}
+  .paused { font-size:11px; color:#92400e; background:#fef3c7; padding:3px 8px; border-radius:10px; }
+  .alertcard { border-left:4px solid var(--amber); background:#fff8f3; }
+
+  /* ===== create watch ===== */
+  label { font-size:13px; font-weight:600; display:block; margin:14px 0 6px; }
+  .input { width:100%; border:1.5px solid var(--line); border-radius:12px; padding:13px; font-size:15px; background:var(--card); }
+  .dates { display:flex; gap:10px; } .dates .input { flex:1; }
+  details { margin-top:16px; } summary { font-size:13.5px; color:var(--green); font-weight:600; cursor:pointer; }
+  .toggle-row { display:flex; justify-content:space-between; align-items:center; padding:10px 0; font-size:13.5px;}
+  .sw { width:42px; height:24px; background:var(--line); border-radius:14px; position:relative; cursor:pointer; }
+  .sw::after { content:''; position:absolute; width:19px; height:19px; background:#fff; border-radius:50%; top:2.5px; left:3px; transition:.2s;}
+  .sw.on { background:var(--green); } .sw.on::after { left:20px; }
+
+  /* notification */
+  .notif { position:absolute; top:54px; left:10px; right:10px; background:rgba(28,25,23,.97); color:#fff; border-radius:18px;
+           padding:13px 15px; z-index:60; display:flex; gap:11px; box-shadow:0 10px 30px rgba(0,0,0,.45);
+           transform:translateY(-130%); transition:transform .35s ease; cursor:pointer; }
+  .notif.show { transform:translateY(0); }
+  .notif .appico { width:38px; height:38px; background:var(--green); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;}
+  .notif b { font-size:13.5px; } .notif p { font-size:12.5px; color:#d6d3d1; margin-top:1px; }
+  .cal-month { font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin:16px 0 8px; }
+  .dl { display:flex; gap:12px; align-items:center; }
+  .dl .date-sq { width:46px; height:46px; border-radius:12px; background:var(--green-light); color:var(--green-dark);
+                 display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0; font-weight:800; }
+  .dl .date-sq small { font-size:9px; font-weight:600; } .dl .date-sq b { font-size:17px; }
+  .dl.lottery .date-sq { background:#ede9fe; color:#5b21b6; }
+</style>
+</head>
+<body>
+
+<div class="note">
+  <h1>⛺ CampWatch — interactive mockup</h1>
+  <p><b>Explore tab:</b> tap any map pin to open its sheet, then “Watch availability.”</p>
+  <p><b>Try:</b> create the watch, then on the Watches tab hit <kbd>Simulate alert</kbd> to see the push notification.</p>
+  <p>Pins: green = reservable, tan = first-come-first-served, purple = dispersed (MVUM) — the free-Dyrt layer.</p>
+  <p>Everything is fake data; this is for reacting to layout and flow.</p>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+
+  <!-- push notification -->
+  <div class="notif" id="notif" onclick="go('watches'); this.classList.remove('show')">
+    <div class="appico">⛺</div>
+    <div><b>Site 041 just opened! · Upper Pines</b>
+      <p>Jul 10–12 · Booked sites get re-grabbed in minutes — tap to book.</p></div>
+  </div>
+
+  <!-- ============ EXPLORE ============ -->
+  <div class="screen active" id="explore">
+    <div class="map">
+      <div class="ridge" style="width:300px;height:170px;top:90px;left:-60px"></div>
+      <div class="ridge" style="width:260px;height:150px;top:300px;right:-70px"></div>
+      <div class="ridge" style="width:200px;height:110px;bottom:140px;left:30px"></div>
+      <div class="water" style="width:170px;height:90px;top:215px;left:115px"></div>
+      <div class="road" style="width:420px;top:380px;left:-20px"></div>
+      <div class="road" style="width:300px;top:180px;left:120px;transform:rotate(24deg)"></div>
+
+      <div class="searchbar">🔍 <span>Search parks, campgrounds, trails…</span></div>
+      <div class="chips">
+        <div class="chip on" onclick="this.classList.toggle('on')">✓ Available my dates</div>
+        <div class="chip on" onclick="this.classList.toggle('on')">Campgrounds</div>
+        <div class="chip" onclick="this.classList.toggle('on')">Dispersed</div>
+        <div class="chip" onclick="this.classList.toggle('on')">FCFS</div>
+      </div>
+
+      <div class="pin cg" style="top:250px;left:95px" onclick="openSheet('up')">
+        <div class="dot"><span>⛺</span></div><div class="tag">Upper Pines · 2 open</div>
+      </div>
+      <div class="pin cg" style="top:330px;left:255px" onclick="openSheet('np')">
+        <div class="dot"><span>⛺</span></div><div class="tag">North Pines · Full</div>
+      </div>
+      <div class="pin fcfs" style="top:165px;left:280px" onclick="openSheet('c4')">
+        <div class="dot"><span>🏕️</span></div><div class="tag">Camp 4 · FCFS</div>
+      </div>
+      <div class="pin disp" style="top:455px;left:150px" onclick="openSheet('mv')">
+        <div class="dot"><span>🌲</span></div><div class="tag">FR-2N17 dispersed</div>
+      </div>
+      <div class="pin disp" style="top:520px;left:300px" onclick="openSheet('mv')">
+        <div class="dot"><span>🌲</span></div><div class="tag">★ 4.6 · 12 spots</div>
+      </div>
+
+      <div class="legend">
+        <div><i style="background:var(--green)"></i>Reservable</div>
+        <div><i style="background:#b08968"></i>First-come-first-served</div>
+        <div><i style="background:#6d597a"></i>Dispersed (free)</div>
+      </div>
+    </div>
+
+    <!-- campground sheets -->
+    <div class="sheet" id="sheet-up">
+      <div class="grab"></div>
+      <h3>Upper Pines Campground</h3>
+      <div class="sub">Yosemite National Park · 235 sites · $36/night</div>
+      <div class="badges"><span class="badge b-av">2 sites open · Jul 10–12</span><span class="badge b-fcfs">FCFS after Oct 15</span></div>
+      <div class="avrow">
+        <div class="avday yes"><b>10</b>Jul · 2</div><div class="avday yes"><b>11</b>Jul · 1</div>
+        <div class="avday no"><b>12</b>Jul · 0</div><div class="avday no"><b>13</b>Jul · 0</div><div class="avday yes"><b>14</b>Jul · 3</div>
+      </div>
+      <button class="btn" onclick="go('create')">🔔 Watch availability</button>
+      <button class="btn sec">Open on recreation.gov ↗</button>
+    </div>
+    <div class="sheet" id="sheet-np">
+      <div class="grab"></div>
+      <h3>North Pines Campground</h3>
+      <div class="sub">Yosemite National Park · 81 sites · $36/night</div>
+      <div class="badges"><span class="badge b-full">Fully booked · your dates</span></div>
+      <p style="font-size:13.5px;color:var(--muted);margin-bottom:12px">No openings Jul 10–12. Set a watch and we'll alert you the second a cancellation appears.</p>
+      <button class="btn" onclick="go('create')">🔔 Watch for cancellations</button>
+    </div>
+    <div class="sheet" id="sheet-c4">
+      <div class="grab"></div>
+      <h3>Camp 4</h3>
+      <div class="sub">Yosemite · walk-in, first-come-first-served</div>
+      <div class="badges"><span class="badge b-fcfs">FCFS — can't be booked online</span></div>
+      <p style="font-size:13.5px;color:var(--muted);margin-bottom:12px">Arrive early. Summer: daily lottery via recreation.gov — we can remind you when it opens.</p>
+      <button class="btn" onclick="go('cal')">📅 Remind me about the lottery</button>
+    </div>
+    <div class="sheet" id="sheet-mv">
+      <div class="grab"></div>
+      <h3>Forest Road 2N17 — dispersed</h3>
+      <div class="sub">Sierra NF · free · camping allowed within 100 ft of road</div>
+      <div class="badges"><span class="badge b-av">★ 4.6 (38 ratings)</span><span class="badge b-fcfs">No reservations — just go</span></div>
+      <p style="font-size:13.5px;color:var(--muted);margin-bottom:12px">“Flat pullouts past mile 3, great cell signal, quiet on weekdays.” — community note</p>
+      <button class="btn">♡ Save to favorites</button>
+      <button class="btn sec">＋ Add a rating / photo</button>
+    </div>
+  </div>
+
+  <!-- ============ CREATE WATCH ============ -->
+  <div class="screen" id="create">
+    <div class="page">
+      <div class="pagehead"><span onclick="go('explore')" style="cursor:pointer;font-size:15px;color:var(--green)">‹ Back</span>New watch<span></span></div>
+      <label>Campground</label>
+      <div class="input">⛺ Upper Pines — Yosemite NP</div>
+      <label>Dates</label>
+      <div class="dates"><div class="input">Jul 10</div><div class="input">Jul 12</div></div>
+      <div class="toggle-row"><span>± 2 days flexible</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+      <details>
+        <summary>Advanced — specific sites, FCFS, nearby campgrounds</summary>
+        <label>Specific sites (blank = any)</label>
+        <div class="input" style="color:var(--muted)">e.g. 041, 086</div>
+        <div class="toggle-row"><span>Include first-come-first-served openings</span><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+        <div class="toggle-row"><span>Also watch campgrounds within 25 mi</span><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+      </details>
+      <div style="margin-top:22px"><button class="btn" onclick="go('watches')">Start watching</button></div>
+      <p style="text-align:center;font-size:12px;color:var(--muted);margin-top:10px">Checked every 5 minutes · push + email alerts</p>
+    </div>
+  </div>
+
+  <!-- ============ WATCHES ============ -->
+  <div class="screen" id="watches">
+    <div class="page">
+      <div class="pagehead">Watches <span class="add" onclick="go('explore')">＋ New</span></div>
+
+      <div class="card alertcard" id="alerted" style="display:none">
+        <div class="row"><h4>🎉 Site 041 opened — Upper Pines</h4></div>
+        <div class="meta">Jul 10–12 · alerted just now</div>
+        <button class="btn" style="margin-top:10px;padding:12px;font-size:14.5px">Book on recreation.gov ↗</button>
+      </div>
+
+      <div class="card">
+        <div class="row"><h4>Upper Pines — Yosemite</h4><span class="checked"><span class="pulse"></span>checked 2 min ago</span></div>
+        <div class="meta">Jul 10–12 (±2 days) · any site · push + email</div>
+      </div>
+      <div class="card">
+        <div class="row"><h4>Kalaloch — Olympic NP</h4><span class="checked"><span class="pulse"></span>checked 4 min ago</span></div>
+        <div class="meta">Aug 21–23 · sites A12, A14 · push + email</div>
+      </div>
+      <div class="card">
+        <div class="row"><h4>Moraine Park — Rocky Mtn</h4><span class="paused">paused</span></div>
+        <div class="meta">Jun 5–7 · trip completed</div>
+      </div>
+
+      <button class="btn sec" onclick="showNotif()" style="margin-top:6px">▶ Simulate alert (demo)</button>
+    </div>
+  </div>
+
+  <!-- ============ CALENDAR ============ -->
+  <div class="screen" id="cal">
+    <div class="page">
+      <div class="pagehead">Calendar</div>
+      <div class="cal-month">June 2026</div>
+      <div class="card dl lottery">
+        <div class="date-sq"><small>JUN</small><b>15</b></div>
+        <div style="flex:1"><h4>Enchantments lottery results</h4><div class="meta">Alpine Lakes Wilderness</div></div>
+        <div class="sw on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="card dl">
+        <div class="date-sq"><small>JUN</small><b>14</b></div>
+        <div style="flex:1"><h4>Your Jul 14 dates go on sale</h4><div class="meta">Bartlett Cove area · 7:00 AM PT — be ready</div></div>
+        <div class="sw on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="cal-month">July 2026</div>
+      <div class="card dl lottery">
+        <div class="date-sq"><small>JUL</small><b>1</b></div>
+        <div style="flex:1"><h4>Half Dome daily lottery opens</h4><div class="meta">Yosemite · applications 12:00 AM PT</div></div>
+        <div class="sw" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="card dl">
+        <div class="date-sq"><small>JUL</small><b>15</b></div>
+        <div style="flex:1"><h4>Jan 15 campsites go on sale</h4><div class="meta">6-month booking window · all rec.gov</div></div>
+        <div class="sw" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROFILE ============ -->
+  <div class="screen" id="profile">
+    <div class="page">
+      <div class="pagehead">Profile</div>
+      <div class="card"><h4>Zack</h4><div class="meta">thejamesbunting@gmail.com</div></div>
+      <div class="card">
+        <div class="row"><h4>CampWatch Pro</h4><span class="badge b-av">$5.99/mo</span></div>
+        <div class="meta">Unlimited watches · 5-min checks · SMS · lottery calendar</div>
+      </div>
+      <div class="card">
+        <div class="toggle-row" style="padding:4px 0"><span>Push notifications</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="toggle-row" style="padding:4px 0"><span>Email alerts</span><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="toggle-row" style="padding:4px 0"><span>SMS alerts (Pro)</span><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- tab bar -->
+  <div class="tabbar">
+    <div class="tab on" data-s="explore" onclick="go('explore')"><span class="ico">🗺️</span>Explore</div>
+    <div class="tab" data-s="watches" onclick="go('watches')"><span class="ico">🔔</span>Watches</div>
+    <div class="tab" data-s="cal" onclick="go('cal')"><span class="ico">📅</span>Calendar</div>
+    <div class="tab" data-s="profile" onclick="go('profile')"><span class="ico">👤</span>Profile</div>
+  </div>
+</div>
+
+<script>
+  function go(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id === 'create' ? 'create' : id).classList.add('active');
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.s === id));
+    closeSheets();
+  }
+  function openSheet(k) { closeSheets(); document.getElementById('sheet-' + k).classList.add('open'); }
+  function closeSheets() { document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open')); }
+  document.querySelector('#explore .map').addEventListener('click', e => { if (e.target.closest('.pin,.sheet,.chip,.searchbar')) return; closeSheets(); });
+  function showNotif() {
+    const n = document.getElementById('notif');
+    document.getElementById('alerted').style.display = 'block';
+    n.classList.add('show');
+    setTimeout(() => n.classList.remove('show'), 5000);
+  }
+</script>
+</body>
+</html>

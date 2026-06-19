@@ -1,0 +1,15 @@
+{
+  "facility_id": "232447",
+  "start_date": "2026-07-10",
+  "end_date": "2026-07-12",
+  "sites": [],
+  "email": {
+    "enabled": false,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "you@gmail.com",
+    "smtp_password": "app-password-here",
+    "from": "you@gmail.com",
+    "to": "you@gmail.com"
+  }
+}
