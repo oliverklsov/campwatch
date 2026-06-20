@@ -58,7 +58,7 @@ type Run = { open_at?: string; close_at?: string; announced_at?: string; deadlin
 
 export async function importLotteries(db: ReturnType<typeof createServiceClient>) {
   const res = await fetch("https://www.recreation.gov/api/lottery/available", {
-    headers: { "User-Agent": "CampWatch/1.0 (https://campwatch-tau.vercel.app)", accept: "application/json" },
+    headers: { "User-Agent": "Yonder/1.0 (https://yonder.camp)", accept: "application/json" },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`lottery list ${res.status}`);

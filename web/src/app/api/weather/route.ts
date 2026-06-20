@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 // every facility is on US federal land. Two hops: points -> forecast URL.
 // NWS asks for a descriptive User-Agent.
 export const dynamic = "force-dynamic";
-const UA = "CampWatch/1.0 (https://campwatch-tau.vercel.app)";
+const UA = "Yonder/1.0 (https://yonder.camp)";
 
 const empty = () => NextResponse.json({ days: [] });
 
