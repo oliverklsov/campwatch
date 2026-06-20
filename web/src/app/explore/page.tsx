@@ -532,7 +532,7 @@ export default function ExplorePage() {
       <div
         ref={containerRef}
         className="bg-stone-100"
-        style={{ position: "fixed", top: 56, bottom: 64, left: 0, right: 0 }}
+        style={{ position: "fixed", top: 64, bottom: 64, left: 0, right: 0 }}
       />
 
       {/* filter chips */}
@@ -632,7 +632,16 @@ export default function ExplorePage() {
         </div>
       )}
 
-      {selected && <Sheet key={selected.id} sel={selected} range={range} onClose={() => setSelected(null)} />}
+      {selected && (
+        <Sheet
+          key={selected.id}
+          sel={selected}
+          range={range}
+          supabase={supabase}
+          userId={userId}
+          onClose={() => setSelected(null)}
+        />
+      )}
       {selectedSpot && (
         <SpotSheet
           key={selectedSpot.id}
@@ -837,6 +846,8 @@ function SpotSheet({
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [fav, setFav] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [photos, setPhotos] = useState<{ id: string; url: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [form, setForm] = useState<{ stars: number; road: string; cell: string; crowd: string; comment: string }>(
     { stars: 0, road: "", cell: "", crowd: "", comment: "" }
   );
@@ -869,6 +880,12 @@ function SpotSheet({
           .eq("user_id", userId);
         if (live) setFav((f ?? []).length > 0);
       }
+      const { data: ph } = await supabase
+        .from("spot_photos")
+        .select("id,url")
+        .eq("spot_id", spot.id)
+        .order("created_at", { ascending: false });
+      if (live) setPhotos((ph ?? []) as { id: string; url: string }[]);
       setLoading(false);
     })();
     return () => {
@@ -900,6 +917,30 @@ function SpotSheet({
       .select("user_id,stars,road_condition,cell_signal,crowding,comment")
       .eq("spot_id", spot.id);
     setRatings((rs ?? []) as Rating[]);
+  }
+
+  async function addPhoto(file: File) {
+    if (!userId) {
+      window.location.href = "/login";
+      return;
+    }
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${spot.id}/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("spot-photos").upload(path, file);
+      if (upErr) return;
+      const { data: pub } = supabase.storage.from("spot-photos").getPublicUrl(path);
+      await supabase.from("spot_photos").insert({ spot_id: spot.id, user_id: userId, path, url: pub.publicUrl });
+      const { data: ph } = await supabase
+        .from("spot_photos")
+        .select("id,url")
+        .eq("spot_id", spot.id)
+        .order("created_at", { ascending: false });
+      setPhotos((ph ?? []) as { id: string; url: string }[]);
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function toggleFav() {
@@ -954,6 +995,39 @@ function SpotSheet({
       </div>
 
       {spot.notes && <p className="mt-2 text-sm text-stone-600">{spot.notes}</p>}
+
+      <div className="mt-3">
+        {photos.length > 0 && (
+          <div className="-mx-1 mb-2 flex gap-2 overflow-x-auto px-1">
+            {photos.map((p) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <a key={p.id} href={p.url} target="_blank" rel="noreferrer" className="shrink-0">
+                <img src={p.url} alt={spot.name} loading="lazy" className="h-24 w-32 rounded-lg object-cover" />
+              </a>
+            ))}
+          </div>
+        )}
+        {userId ? (
+          <label className="inline-block cursor-pointer text-xs font-medium text-green-700 hover:underline">
+            {uploading ? "Uploading…" : "+ Add photo"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) addPhoto(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        ) : (
+          <a href="/login" className="text-xs font-medium text-green-700 hover:underline">
+            Sign in to add a photo
+          </a>
+        )}
+      </div>
 
       <div className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-sm">
         {loading ? (
@@ -1092,10 +1166,14 @@ function Select({
 function Sheet({
   sel,
   range,
+  supabase,
+  userId,
   onClose,
 }: {
   sel: Selected;
   range: { start: string; end: string };
+  supabase: ReturnType<typeof createClient>;
+  userId: string | null;
   onClose: () => void;
 }) {
   const [av, setAv] = useState<Avail>({ loading: true });
@@ -1340,6 +1418,8 @@ function Sheet({
           </div>
         )}
 
+        <CampgroundReviews facilityId={sel.id} facilityName={sel.name} userId={userId} supabase={supabase} />
+
         <a
           href={watchHref}
           className="block w-full rounded-xl bg-green-700 py-3.5 text-center font-bold text-white hover:bg-green-800"
@@ -1366,5 +1446,134 @@ function Sheet({
         </div>
       )}
     </>
+  );
+}
+
+function CampgroundReviews({
+  facilityId,
+  facilityName,
+  userId,
+  supabase,
+}: {
+  facilityId: string;
+  facilityName: string;
+  userId: string | null;
+  supabase: ReturnType<typeof createClient>;
+}) {
+  const [reviews, setReviews] = useState<{ user_id: string; stars: number | null; comment: string | null }[]>([]);
+  const [form, setForm] = useState<{ stars: number; comment: string }>({ stars: 0, comment: "" });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    (async () => {
+      const { data } = await supabase
+        .from("campground_reviews")
+        .select("user_id,stars,comment")
+        .eq("facility_id", facilityId);
+      if (!live) return;
+      const list = (data ?? []) as { user_id: string; stars: number | null; comment: string | null }[];
+      setReviews(list);
+      const mine = userId ? list.find((r) => r.user_id === userId) : undefined;
+      if (mine) setForm({ stars: mine.stars ?? 0, comment: mine.comment ?? "" });
+      setLoading(false);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [facilityId, userId, supabase]);
+
+  const count = reviews.length;
+  const starVals = reviews.map((r) => r.stars).filter((s): s is number => typeof s === "number");
+  const avg = starVals.length ? starVals.reduce((a, b) => a + b, 0) / starVals.length : null;
+
+  async function submit() {
+    if (!userId) {
+      window.location.href = "/login";
+      return;
+    }
+    await supabase.from("campground_reviews").upsert(
+      {
+        facility_id: facilityId,
+        facility_name: facilityName,
+        user_id: userId,
+        stars: form.stars || null,
+        comment: form.comment.trim() || null,
+      },
+      { onConflict: "facility_id,user_id" }
+    );
+    const { data } = await supabase
+      .from("campground_reviews")
+      .select("user_id,stars,comment")
+      .eq("facility_id", facilityId);
+    setReviews((data ?? []) as { user_id: string; stars: number | null; comment: string | null }[]);
+  }
+
+  return (
+    <div className="my-3 border-t border-stone-100 pt-3">
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Camper reviews</p>
+      {loading ? (
+        <p className="text-sm text-stone-500">Loading reviews…</p>
+      ) : count === 0 ? (
+        <p className="text-sm text-stone-500">No reviews yet — be the first.</p>
+      ) : (
+        <>
+          <p className="text-sm font-medium">
+            {avg != null ? `★ ${avg.toFixed(1)}` : "Unrated"}{" "}
+            <span className="font-normal text-stone-500">
+              · {count} review{count !== 1 ? "s" : ""}
+            </span>
+          </p>
+          <div className="mt-1 space-y-1.5">
+            {reviews
+              .filter((r) => r.comment)
+              .slice(0, 5)
+              .map((r, i) => (
+                <p key={i} className="rounded-lg bg-stone-50 px-3 py-1.5 text-xs text-stone-700">
+                  {r.stars ? `★${r.stars} ` : ""}
+                  {r.comment}
+                </p>
+              ))}
+          </div>
+        </>
+      )}
+      {!userId ? (
+        <p className="mt-2 text-sm text-stone-600">
+          <a href="/login" className="font-medium text-green-700 underline">
+            Sign in
+          </a>{" "}
+          to leave a review.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-2">
+          <div className="flex gap-1">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setForm((f) => ({ ...f, stars: n }))}
+                className={`text-2xl leading-none ${n <= form.stars ? "text-amber-500" : "text-stone-300"}`}
+                aria-label={`${n} stars`}
+              >
+                ★
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={form.comment}
+            onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
+            rows={2}
+            placeholder="How was it?"
+            className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+          />
+          <button
+            onClick={submit}
+            className="w-full rounded-xl bg-green-700 py-2.5 text-sm font-bold text-white hover:bg-green-800"
+          >
+            Save review
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

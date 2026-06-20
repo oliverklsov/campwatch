@@ -3,13 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Mobile-style bottom nav matching the mockup. Calendar/Profile arrive in Phase 3,
-// shown disabled for now so the shell is complete without dead links.
+// Mobile-style bottom nav: Explore · Watches · Lotteries · Profile.
 const tabs = [
   { href: "/explore", label: "Explore", icon: "🗺️" },
   { href: "/dashboard", label: "Watches", icon: "🔔" },
   { href: "/lotteries", label: "Lotteries", icon: "🎟️" },
-  { href: "/profile", label: "Profile", icon: "👤", soon: true },
+  { href: "/profile", label: "Profile", icon: "👤" },
 ];
 
 export default function TabBar() {
@@ -19,14 +18,6 @@ export default function TabBar() {
       {tabs.map((t) => {
         const active = path === t.href || (t.href !== "/explore" && path?.startsWith(t.href));
         const cls = "flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px]";
-        if (t.soon) {
-          return (
-            <span key={t.href} className={`${cls} cursor-default text-stone-300`} title="Coming soon">
-              <span className="text-xl leading-none">{t.icon}</span>
-              {t.label}
-            </span>
-          );
-        }
         return (
           <Link
             key={t.href}
