@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, {
   type StyleSpecification,
   type GeoJSONSource,
@@ -8,17 +8,30 @@ import maplibregl, {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import TabBar from "@/components/TabBar";
+import { createClient } from "@/lib/supabase/client";
 
 const GREEN = "#2d6a4f";
 const TAN = "#b08968";
 const PURPLE = "#6d597a";
+const MAGENTA = "#e0218a"; // dispersed roads + bubbles
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY;
+const ROAD_MIN_ZOOM = 9; // dispersed roads only load when zoomed in this far
+const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 const isoPlus = (days: number) => new Date(Date.now() + days * 86400_000).toISOString().slice(0, 10);
 const mmdd = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const subDays = (d: string, n: number) =>
   new Date(Date.parse(d + "T00:00:00Z") - n * 86400_000).toISOString().slice(0, 10);
+
+// Pick a representative point on a line for its bubble marker.
+function midpoint(geom: GeoJSON.Geometry): [number, number] {
+  let coords: number[][] = [];
+  if (geom.type === "LineString") coords = geom.coordinates as number[][];
+  else if (geom.type === "MultiLineString") coords = (geom.coordinates as number[][][]).flat();
+  if (coords.length === 0) return [0, 0];
+  return coords[Math.floor(coords.length / 2)] as [number, number];
+}
 
 // Teardrop map pin with a white tent inside, in the given color.
 function pinSvg(color: string) {
@@ -62,6 +75,16 @@ const OSM_STYLE: StyleSpecification = {
 };
 
 type Selected = { id: string; name: string; reservable: boolean; city: string; state: string; lat: number; lng: number };
+type Spot = { id: string; name: string; notes: string | null; user_id: string; lat: number; lng: number };
+type Road = { id: string; name: string; forest: string | null; season: string | null; lat: number; lng: number };
+type Rating = {
+  user_id: string;
+  stars: number | null;
+  road_condition: string | null;
+  cell_signal: string | null;
+  crowding: string | null;
+  comment: string | null;
+};
 type Avail = {
   loading: boolean;
   error?: boolean;
@@ -72,6 +95,8 @@ type Avail = {
   totalOpenings?: number;
   bookable?: number;
   fcfs?: number;
+  bookableSites?: number;
+  openSites?: number;
   siteNightDates?: { date: string; count: number; status?: string }[];
   bookingUrl?: string;
 };
@@ -89,18 +114,94 @@ export default function ExplorePage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap>();
   const fcRef = useRef<GeoJSON.FeatureCollection | null>(null);
+  const supabase = useMemo(() => createClient(), []);
   const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState<Selected | null>(null);
+  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
+  const [selectedRoad, setSelectedRoad] = useState<Road | null>(null);
+  const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [show, setShow] = useState({ reservable: true, fcfs: true });
+  const [showDispersed, setShowDispersed] = useState(false);
+  const [addMode, setAddMode] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [range, setRange] = useState({ start: isoToday(), end: isoPlus(30) });
   const [stateFilter, setStateFilter] = useState("all");
   const [states, setStates] = useState<string[]>([]);
   const [satellite, setSatellite] = useState(true);
+  const [zoom, setZoom] = useState(3.4);
   const [mounted, setMounted] = useState(false);
+
+  // Refs so map event handlers (registered once) always read current values.
+  const showDispersedRef = useRef(showDispersed);
+  showDispersedRef.current = showDispersed;
+  const addModeRef = useRef(addMode);
+  addModeRef.current = addMode;
 
   // Render only on the client — the map and date defaults depend on the browser,
   // so SSR'd HTML would never match (hydration error). Placeholder matches on both.
   useEffect(() => setMounted(true), []);
+
+  // ---- dispersed-layer data loaders (stable: only depend on the supabase client) ----
+  const loadRoads = useMemo(
+    () => async (map: MlMap) => {
+      const src = map.getSource("mvum") as GeoJSONSource | undefined;
+      const bub = map.getSource("mvum-bubbles") as GeoJSONSource | undefined;
+      if (!src || !bub) return;
+      if (map.getZoom() < ROAD_MIN_ZOOM) {
+        src.setData(EMPTY_FC);
+        bub.setData(EMPTY_FC);
+        return;
+      }
+      const b = map.getBounds();
+      const { data } = await supabase
+        .from("mvum_roads")
+        .select("id,name,forest,season,geom")
+        .lte("min_lng", b.getEast())
+        .gte("max_lng", b.getWest())
+        .lte("min_lat", b.getNorth())
+        .gte("max_lat", b.getSouth())
+        .limit(1000);
+      const rows = (data ?? []) as {
+        id: string;
+        name: string;
+        forest: string | null;
+        season: string | null;
+        geom: GeoJSON.Geometry;
+      }[];
+      const props = (r: (typeof rows)[number]) => ({ id: r.id, name: r.name, forest: r.forest, season: r.season });
+      src.setData({
+        type: "FeatureCollection",
+        features: rows.map((r) => ({ type: "Feature" as const, geometry: r.geom, properties: props(r) })),
+      });
+      bub.setData({
+        type: "FeatureCollection",
+        features: rows.map((r) => ({
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: midpoint(r.geom) },
+          properties: props(r),
+        })),
+      });
+    },
+    [supabase]
+  );
+
+  const loadSpots = useMemo(
+    () => async (map: MlMap) => {
+      const src = map.getSource("spots") as GeoJSONSource | undefined;
+      if (!src) return;
+      const { data } = await supabase
+        .from("dispersed_spots")
+        .select("id,name,lat,lng,notes,user_id")
+        .limit(1000);
+      const features = (data ?? []).map((s: Spot) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
+        properties: { id: s.id, name: s.name, notes: s.notes, user_id: s.user_id },
+      }));
+      src.setData({ type: "FeatureCollection", features });
+    },
+    [supabase]
+  );
 
   // ---- init map once (after client mount, when the container exists) ----
   useEffect(() => {
@@ -116,6 +217,8 @@ export default function ExplorePage() {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     // Safety net: ensure the canvas matches the container once layout settles.
     setTimeout(() => map.resize(), 0);
+
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
 
     map.on("load", async () => {
       map.resize();
@@ -142,6 +245,47 @@ export default function ExplorePage() {
       });
       map.addLayer({ id: "sat", type: "raster", source: "sat", layout: { visibility: "visible" } });
 
+      // Dispersed-camping MVUM roads (magenta), under the campground pins. A white
+      // halo layer (filtered to the selected road) sits below for the highlight; a
+      // magenta bubble sits on each road as a tap target.
+      map.addSource("mvum", { type: "geojson", data: EMPTY_FC });
+      map.addSource("mvum-bubbles", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "mvum-hl",
+        type: "line",
+        source: "mvum",
+        filter: ["==", ["get", "id"], "__none__"],
+        layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
+        paint: {
+          "line-color": "#ffffff",
+          "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 6, 15, 12],
+        },
+      });
+      map.addLayer({
+        id: "mvum",
+        type: "line",
+        source: "mvum",
+        layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
+        paint: {
+          "line-color": MAGENTA,
+          "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.6, 12, 3, 15, 5],
+        },
+      });
+      map.addLayer({
+        id: "mvum-bubbles",
+        type: "circle",
+        source: "mvum-bubbles",
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": MAGENTA,
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 3.5, 13, 6.5],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.5,
+        },
+      });
+
       map.addSource("facilities", {
         type: "geojson",
         data: fc,
@@ -166,6 +310,7 @@ export default function ExplorePage() {
       await Promise.all([
         loadPinImage(map, "pin-green", GREEN),
         loadPinImage(map, "pin-tan", TAN),
+        loadPinImage(map, "pin-purple", PURPLE),
       ]);
       map.addLayer({
         id: "pts",
@@ -180,6 +325,21 @@ export default function ExplorePage() {
         },
       });
 
+      // User-submitted dispersed spots (purple pins), on top.
+      map.addSource("spots", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "spot-pts",
+        type: "symbol",
+        source: "spots",
+        layout: {
+          "icon-image": "pin-purple",
+          "icon-size": 0.9,
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          visibility: "none",
+        },
+      });
+
       map.on("click", "clusters", (e) => {
         const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
         const clusterId = f.properties?.cluster_id;
@@ -190,9 +350,12 @@ export default function ExplorePage() {
           });
       });
       map.on("click", "pts", (e) => {
+        if (addModeRef.current) return;
         const f = e.features?.[0];
         const p = f?.properties ?? {};
         const coords = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
+        setSelectedSpot(null);
+        setSelectedRoad(null);
         setSelected({
           id: String(p.id),
           name: String(p.name ?? "Campground"),
@@ -203,14 +366,62 @@ export default function ExplorePage() {
           lat: Number(coords[1]),
         });
       });
-      for (const layer of ["pts", "clusters"]) {
+      map.on("click", "spot-pts", (e) => {
+        if (addModeRef.current) return;
+        const f = e.features?.[0];
+        const p = f?.properties ?? {};
+        const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
+        setSelected(null);
+        setSelectedRoad(null);
+        setSelectedSpot({
+          id: String(p.id),
+          name: String(p.name ?? "Dispersed spot"),
+          notes: p.notes ? String(p.notes) : null,
+          user_id: String(p.user_id ?? ""),
+          lng: Number(c[0]),
+          lat: Number(c[1]),
+        });
+      });
+      map.on("click", "mvum-bubbles", (e) => {
+        if (addModeRef.current) return;
+        const f = e.features?.[0];
+        const p = f?.properties ?? {};
+        const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
+        setSelected(null);
+        setSelectedSpot(null);
+        setSelectedRoad({
+          id: String(p.id),
+          name: p.name ? String(p.name) : "",
+          forest: p.forest ? String(p.forest) : null,
+          season: p.season ? String(p.season) : null,
+          lng: Number(c[0]),
+          lat: Number(c[1]),
+        });
+      });
+      for (const layer of ["pts", "clusters", "spot-pts", "mvum-bubbles"]) {
         map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
-        map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
+        map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = addModeRef.current ? "crosshair" : ""));
       }
-      // Tap empty map (not a pin/cluster) to dismiss the open sheet.
+      // Tap empty map: drop a spot in add-mode, otherwise dismiss any open sheet.
       map.on("click", (e) => {
-        const hits = map.queryRenderedFeatures(e.point, { layers: ["pts", "clusters"] });
-        if (hits.length === 0) setSelected(null);
+        if (addModeRef.current) {
+          setDraft({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+          setAddMode(false);
+          return;
+        }
+        const hits = map.queryRenderedFeatures(e.point, {
+          layers: ["pts", "clusters", "spot-pts", "mvum-bubbles"],
+        });
+        if (hits.length === 0) {
+          setSelected(null);
+          setSelectedSpot(null);
+          setSelectedRoad(null);
+        }
+      });
+      // Reload viewport roads + track zoom as the user pans.
+      map.on("moveend", () => {
+        setZoom(map.getZoom());
+        if (showDispersedRef.current) loadRoads(map);
       });
       setReady(true);
     });
@@ -219,7 +430,7 @@ export default function ExplorePage() {
       map.remove();
       mapRef.current = undefined;
     };
-  }, [mounted]);
+  }, [mounted, supabase, loadRoads]);
 
   // ---- apply chip filter (re-cluster on filtered data) ----
   useEffect(() => {
@@ -241,6 +452,36 @@ export default function ExplorePage() {
     map.setLayoutProperty("sat", "visibility", satellite ? "visible" : "none");
   }, [satellite, ready]);
 
+  // Toggle the dispersed-camping layers; load their data when turned on.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const vis = showDispersed ? "visible" : "none";
+    for (const id of ["mvum", "mvum-hl", "mvum-bubbles", "spot-pts"])
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+    if (showDispersed) {
+      loadRoads(map);
+      loadSpots(map);
+    } else {
+      setAddMode(false);
+      setSelectedRoad(null);
+    }
+  }, [showDispersed, ready, loadRoads, loadSpots]);
+
+  // Highlight the selected dispersed road (white halo filtered to its id).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("mvum-hl")) return;
+    map.setFilter("mvum-hl", ["==", ["get", "id"], selectedRoad ? selectedRoad.id : "__none__"]);
+  }, [selectedRoad, ready]);
+
+  // Reflect add-mode in the cursor.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.getCanvas().style.cursor = addMode ? "crosshair" : "";
+  }, [addMode]);
+
   // Fly the map to the selected state's campgrounds (reset to US on "all").
   useEffect(() => {
     const map = mapRef.current;
@@ -256,6 +497,25 @@ export default function ExplorePage() {
     for (const f of feats) b.extend((f.geometry as GeoJSON.Point).coordinates as [number, number]);
     map.fitBounds(b, { padding: 50, maxZoom: 9, duration: 700 });
   }, [stateFilter, ready]);
+
+  async function saveSpot(name: string, notes: string) {
+    const map = mapRef.current;
+    if (!userId) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!draft || !map) return;
+    const { data, error } = await supabase
+      .from("dispersed_spots")
+      .insert({ user_id: userId, name, lat: draft.lat, lng: draft.lng, notes: notes || null })
+      .select("id,name,lat,lng,notes,user_id")
+      .single();
+    setDraft(null);
+    if (!error && data) {
+      await loadSpots(map);
+      setSelectedSpot(data as Spot);
+    }
+  }
 
   if (!mounted) {
     return (
@@ -295,6 +555,14 @@ export default function ExplorePage() {
         <Chip on={show.fcfs} onClick={() => setShow((s) => ({ ...s, fcfs: !s.fcfs }))}>
           🏕️ First-come-first-served
         </Chip>
+        <Chip on={showDispersed} onClick={() => setShowDispersed((v) => !v)} color={MAGENTA}>
+          🚐 Dispersed
+        </Chip>
+        {showDispersed && (
+          <Chip on={addMode} onClick={() => setAddMode((v) => !v)} color={PURPLE}>
+            ➕ Add spot
+          </Chip>
+        )}
       </div>
 
       {/* date-range control — drives the availability shown in each pin's sheet */}
@@ -317,13 +585,37 @@ export default function ExplorePage() {
         />
       </div>
 
+      {/* add-mode banner */}
+      {addMode && (
+        <div className="fixed left-1/2 top-[112px] z-30 -translate-x-1/2 rounded-full bg-[#6d597a] px-4 py-2 text-xs font-medium text-white shadow-lg">
+          Tap the map to drop your dispersed spot ·{" "}
+          <button onClick={() => setAddMode(false)} className="underline">
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* dispersed zoom hint */}
+      {showDispersed && !addMode && zoom < ROAD_MIN_ZOOM && (
+        <div className="fixed left-1/2 top-[112px] z-20 -translate-x-1/2 rounded-full bg-white/95 px-3 py-1.5 text-xs text-stone-600 shadow">
+          Zoom in to see dispersed forest roads
+        </div>
+      )}
+
       {/* legend */}
-      <div className="fixed bottom-[76px] left-3 z-20 rounded-xl bg-white/95 px-3 py-2 text-[11px] leading-relaxed shadow-sm">
+      <div className="fixed bottom-[76px] left-3 z-20 max-w-[220px] rounded-xl bg-white/95 px-3 py-2 text-[11px] leading-relaxed shadow-sm">
         <LegendRow color={GREEN}>Reservable</LegendRow>
         <LegendRow color={TAN}>First-come-first-served</LegendRow>
-        <LegendRow color={PURPLE} muted>
-          Dispersed (free) — coming soon
+        <LegendRow color={MAGENTA}>Dispersed roads (MVUM)</LegendRow>
+        <LegendRow color={PURPLE} pin>
+          Saved dispersed spots
         </LegendRow>
+        {showDispersed && (
+          <p className="mt-1 border-t border-stone-200 pt-1 text-[10px] text-stone-400">
+            Camping usually allowed within ~300 ft of these forest roads unless posted — verify on the
+            forest&apos;s MVUM.
+          </p>
+        )}
       </div>
 
       {/* basemap toggle */}
@@ -341,31 +633,459 @@ export default function ExplorePage() {
       )}
 
       {selected && <Sheet key={selected.id} sel={selected} range={range} onClose={() => setSelected(null)} />}
+      {selectedSpot && (
+        <SpotSheet
+          key={selectedSpot.id}
+          spot={selectedSpot}
+          userId={userId}
+          supabase={supabase}
+          onClose={() => setSelectedSpot(null)}
+          onDeleted={async () => {
+            setSelectedSpot(null);
+            if (mapRef.current) await loadSpots(mapRef.current);
+          }}
+        />
+      )}
+      {selectedRoad && <RoadSheet key={selectedRoad.id} road={selectedRoad} onClose={() => setSelectedRoad(null)} />}
+      {draft && <AddSpotForm userId={userId} onCancel={() => setDraft(null)} onSave={saveSpot} />}
 
       <TabBar />
     </>
   );
 }
 
-function LegendRow({ color, muted, children }: { color: string; muted?: boolean; children: React.ReactNode }) {
+function LegendRow({
+  color,
+  pin,
+  children,
+}: {
+  color: string;
+  pin?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={`flex items-center gap-2 ${muted ? "text-stone-400" : "text-stone-700"}`}>
-      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+    <div className="flex items-center gap-2 text-stone-700">
+      <span
+        className={`inline-block ${pin ? "h-3 w-2 rounded-sm" : "h-2.5 w-2.5 rounded-full"}`}
+        style={{ backgroundColor: color }}
+      />
       {children}
     </div>
   );
 }
 
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+function Chip({
+  on,
+  onClick,
+  color,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  color?: string;
+  children: React.ReactNode;
+}) {
+  const onStyle = color ? { backgroundColor: color, borderColor: color, color: "#fff" } : undefined;
   return (
     <button
       onClick={onClick}
+      style={on ? onStyle : undefined}
       className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
-        on ? "border-green-700 bg-green-700 text-white" : "border-stone-300 bg-white text-stone-700"
+        on
+          ? color
+            ? ""
+            : "border-green-700 bg-green-700 text-white"
+          : "border-stone-300 bg-white text-stone-700"
       }`}
     >
       {children}
     </button>
+  );
+}
+
+function RoadSheet({ road, onClose }: { road: Road; onClose: () => void }) {
+  const label = road.name ? (/^[0-9]/.test(road.name) ? `Forest Road ${road.name}` : road.name) : "Forest road";
+  return (
+    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+      <h3 className="text-lg font-bold">{label}</h3>
+      <p className="text-sm" style={{ color: MAGENTA }}>
+        Dispersed-camping forest road
+      </p>
+      <div className="mt-2 space-y-0.5 text-sm text-stone-600">
+        {road.forest && <p>{road.forest}</p>}
+        {road.season && <p>Open: {road.season}</p>}
+      </div>
+      <p className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-500">
+        Dispersed camping is generally allowed within ~300 ft of this road unless posted otherwise. Confirm on
+        the forest&apos;s MVUM, don&apos;t block the road, and pack out everything.
+      </p>
+      <a
+        href={`https://www.google.com/maps/dir/?api=1&destination=${road.lat},${road.lng}`}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-3 block w-full rounded-xl border border-stone-300 py-2.5 text-center text-sm font-medium text-stone-700 hover:bg-stone-50"
+      >
+        Directions to this road ↗
+      </a>
+    </div>
+  );
+}
+
+function AddSpotForm({
+  userId,
+  onCancel,
+  onSave,
+}: {
+  userId: string | null;
+  onCancel: () => void;
+  onSave: (name: string, notes: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 px-4" onClick={onCancel}>
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-bold">Add a dispersed spot</h3>
+        {!userId ? (
+          <p className="mt-2 text-sm text-stone-600">
+            <a href="/login" className="font-medium text-green-700 underline">
+              Sign in
+            </a>{" "}
+            to save a spot for the community.
+          </p>
+        ) : (
+          <>
+            <label className="mt-3 block text-xs font-medium text-stone-500">Name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Pine flat off FR 300"
+              className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+            />
+            <label className="mt-3 block text-xs font-medium text-stone-500">Notes (optional)</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Access, shade, what to expect…"
+              className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+            />
+          </>
+        )}
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 rounded-xl border border-stone-300 py-2.5 text-sm font-medium text-stone-700"
+          >
+            Cancel
+          </button>
+          {userId && (
+            <button
+              onClick={() => name.trim() && onSave(name.trim(), notes.trim())}
+              disabled={!name.trim()}
+              className="flex-1 rounded-xl bg-[#6d597a] py-2.5 text-sm font-bold text-white disabled:opacity-50"
+            >
+              Save spot
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ROAD_OPTS = ["paved", "gravel", "rough", "4x4-only"];
+const CELL_OPTS = ["none", "weak", "good"];
+const CROWD_OPTS = ["empty", "some", "crowded"];
+
+function mode(values: (string | null)[]) {
+  const counts: Record<string, number> = {};
+  for (const v of values) if (v) counts[v] = (counts[v] ?? 0) + 1;
+  let best: string | null = null;
+  let n = 0;
+  for (const [k, c] of Object.entries(counts)) if (c > n) ((best = k), (n = c));
+  return best;
+}
+
+function SpotSheet({
+  spot,
+  userId,
+  supabase,
+  onClose,
+  onDeleted,
+}: {
+  spot: Spot;
+  userId: string | null;
+  supabase: ReturnType<typeof createClient>;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [ratings, setRatings] = useState<Rating[]>([]);
+  const [fav, setFav] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<{ stars: number; road: string; cell: string; crowd: string; comment: string }>(
+    { stars: 0, road: "", cell: "", crowd: "", comment: "" }
+  );
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    (async () => {
+      const { data: rs } = await supabase
+        .from("spot_ratings")
+        .select("user_id,stars,road_condition,cell_signal,crowding,comment")
+        .eq("spot_id", spot.id);
+      if (!live) return;
+      const list = (rs ?? []) as Rating[];
+      setRatings(list);
+      const mine = userId ? list.find((r) => r.user_id === userId) : undefined;
+      if (mine)
+        setForm({
+          stars: mine.stars ?? 0,
+          road: mine.road_condition ?? "",
+          cell: mine.cell_signal ?? "",
+          crowd: mine.crowding ?? "",
+          comment: mine.comment ?? "",
+        });
+      if (userId) {
+        const { data: f } = await supabase
+          .from("spot_favorites")
+          .select("spot_id")
+          .eq("spot_id", spot.id)
+          .eq("user_id", userId);
+        if (live) setFav((f ?? []).length > 0);
+      }
+      setLoading(false);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [spot.id, userId, supabase]);
+
+  const count = ratings.length;
+  const starVals = ratings.map((r) => r.stars).filter((s): s is number => typeof s === "number");
+  const avg = starVals.length ? starVals.reduce((a, b) => a + b, 0) / starVals.length : null;
+
+  async function submitRating() {
+    if (!userId) {
+      window.location.href = "/login";
+      return;
+    }
+    const row = {
+      spot_id: spot.id,
+      user_id: userId,
+      stars: form.stars || null,
+      road_condition: form.road || null,
+      cell_signal: form.cell || null,
+      crowding: form.crowd || null,
+      comment: form.comment.trim() || null,
+    };
+    await supabase.from("spot_ratings").upsert(row, { onConflict: "spot_id,user_id" });
+    const { data: rs } = await supabase
+      .from("spot_ratings")
+      .select("user_id,stars,road_condition,cell_signal,crowding,comment")
+      .eq("spot_id", spot.id);
+    setRatings((rs ?? []) as Rating[]);
+  }
+
+  async function toggleFav() {
+    if (!userId) {
+      window.location.href = "/login";
+      return;
+    }
+    if (fav) {
+      setFav(false);
+      await supabase.from("spot_favorites").delete().eq("spot_id", spot.id).eq("user_id", userId);
+    } else {
+      setFav(true);
+      await supabase.from("spot_favorites").insert({ spot_id: spot.id, user_id: userId });
+    }
+  }
+
+  async function deleteSpot() {
+    if (!userId || spot.user_id !== userId) return;
+    if (!window.confirm("Delete this spot?")) return;
+    await supabase.from("dispersed_spots").delete().eq("id", spot.id).eq("user_id", userId);
+    onDeleted();
+  }
+
+  return (
+    <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-bold">{spot.name}</h3>
+          <p className="text-sm" style={{ color: PURPLE }}>
+            Dispersed camping spot
+          </p>
+        </div>
+        <button
+          onClick={toggleFav}
+          className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium ${
+            fav ? "bg-[#6d597a] text-white" : "border border-stone-300 text-stone-700"
+          }`}
+        >
+          {fav ? "★ Saved" : "☆ Save"}
+        </button>
+      </div>
+
+      {spot.notes && <p className="mt-2 text-sm text-stone-600">{spot.notes}</p>}
+
+      <div className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-sm">
+        {loading ? (
+          <p className="text-stone-500">Loading reviews…</p>
+        ) : count === 0 ? (
+          <p className="text-stone-500">No reviews yet — be the first.</p>
+        ) : (
+          <div className="space-y-0.5">
+            <p className="font-medium">
+              {avg != null ? `★ ${avg.toFixed(1)}` : "Unrated"}{" "}
+              <span className="font-normal text-stone-500">
+                · {count} review{count !== 1 ? "s" : ""}
+              </span>
+            </p>
+            <p className="text-xs text-stone-600">
+              Road: {mode(ratings.map((r) => r.road_condition)) ?? "—"} · Cell:{" "}
+              {mode(ratings.map((r) => r.cell_signal)) ?? "—"} · Crowding:{" "}
+              {mode(ratings.map((r) => r.crowding)) ?? "—"}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* recent comments */}
+      {ratings.filter((r) => r.comment).length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {ratings
+            .filter((r) => r.comment)
+            .slice(0, 5)
+            .map((r, i) => (
+              <p key={i} className="rounded-lg bg-stone-50 px-3 py-1.5 text-xs text-stone-700">
+                {r.stars ? `★${r.stars} ` : ""}
+                {r.comment}
+              </p>
+            ))}
+        </div>
+      )}
+
+      {/* your review */}
+      <div className="mt-4">
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Your review</p>
+        {!userId ? (
+          <p className="text-sm text-stone-600">
+            <a href="/login" className="font-medium text-green-700 underline">
+              Sign in
+            </a>{" "}
+            to rate and save this spot.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setForm((f) => ({ ...f, stars: n }))}
+                  className={`text-2xl leading-none ${n <= form.stars ? "text-amber-500" : "text-stone-300"}`}
+                  aria-label={`${n} stars`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Select label="Road" value={form.road} opts={ROAD_OPTS} onChange={(v) => setForm((f) => ({ ...f, road: v }))} />
+              <Select label="Cell" value={form.cell} opts={CELL_OPTS} onChange={(v) => setForm((f) => ({ ...f, cell: v }))} />
+              <Select label="Crowding" value={form.crowd} opts={CROWD_OPTS} onChange={(v) => setForm((f) => ({ ...f, crowd: v }))} />
+            </div>
+            <textarea
+              value={form.comment}
+              onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
+              rows={2}
+              placeholder="Anything worth knowing?"
+              className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
+            />
+            <button
+              onClick={submitRating}
+              className="w-full rounded-xl bg-[#6d597a] py-2.5 text-sm font-bold text-white"
+            >
+              Save review
+            </button>
+          </div>
+        )}
+      </div>
+
+      <a
+        href={`https://www.google.com/maps/dir/?api=1&destination=${spot.lat},${spot.lng}`}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-3 block w-full rounded-xl border border-stone-300 py-2.5 text-center text-sm font-medium text-stone-700 hover:bg-stone-50"
+      >
+        Directions ↗
+      </a>
+      {userId && spot.user_id === userId && (
+        <button onClick={deleteSpot} className="mt-2 w-full py-2 text-center text-xs text-red-500">
+          Delete this spot
+        </button>
+      )}
+      <p className="mt-3 text-[11px] text-stone-400">
+        Dispersed sites are user-submitted. Confirm legality (within ~300 ft of an open forest road, no
+        closures) on the forest&apos;s MVUM and pack out everything.
+      </p>
+    </div>
+  );
+}
+
+function Select({
+  label,
+  value,
+  opts,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  opts: string[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1 text-xs text-stone-600">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded border border-stone-300 px-1.5 py-1 text-xs"
+      >
+        <option value="">—</option>
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -380,6 +1100,7 @@ function Sheet({
 }) {
   const [av, setAv] = useState<Avail>({ loading: true });
   const [images, setImages] = useState<{ url: string; title: string }[]>([]);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   // Availability re-fetches whenever the pin or the chosen date range changes.
   useEffect(() => {
@@ -438,174 +1159,212 @@ function Sheet({
 
   const place = [sel.city, sel.state].filter(Boolean).join(", ");
   const total = av.totalOpenings ?? 0;
+  const bookableSites = av.bookableSites ?? 0;
+  const openSites = av.openSites ?? 0;
   const span = `${mmdd(range.start)}–${mmdd(range.end)}`;
   const watchHref =
     `/dashboard/new?facility=${encodeURIComponent(sel.id)}&name=${encodeURIComponent(sel.name)}` +
     `&start=${range.start}&end=${range.end}`;
 
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
-        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
-
-      {images.length > 0 && (
-        <div className="mb-3 -mx-1 flex gap-2 overflow-x-auto px-1">
-          {images.slice(0, 8).map((im, i) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={i}
-              src={im.url}
-              alt={im.title || sel.name}
-              loading="lazy"
-              className="h-28 w-44 flex-shrink-0 rounded-lg object-cover"
-            />
-          ))}
+    <>
+      <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+        <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+          <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
-      )}
 
-      <h3 className="text-lg font-bold">{sel.name}</h3>
-      {place && <p className="text-sm text-stone-500">{place}</p>}
-
-      {/* Authoritative reservation type from RIDB per-site data. */}
-      {!av.loading && av.resType && av.resType !== "unknown" && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {av.resType === "reservable" && (
-            <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
-              Reservable on recreation.gov
-            </span>
-          )}
-          {av.resType === "fcfs" && (
-            <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-800">
-              First-come-first-served · no reservations
-            </span>
-          )}
-          {av.resType === "mixed" && (
-            <>
-              <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
-                Part reservable
-              </span>
-              <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-800">
-                Part first-come
-              </span>
-            </>
-          )}
-          {(av.siteTotal ?? 0) > 0 && (
-            <span className="text-xs text-stone-500">
-              {av.reservableSites} reservable / {av.fcfsSites} first-come · {av.siteTotal} sites
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Only assert what the live feed can prove for the chosen dates: how many
-          site-nights are bookable online ("Available") vs first-come ("Open").
-          Reservation policy varies by season, so we defer the authoritative answer
-          to recreation.gov rather than guessing a campground-level label. */}
-      <div className="my-3 min-h-[44px] text-sm">
-        {av.loading ? (
-          <p className="text-stone-500">Checking live availability…</p>
-        ) : av.error ? (
-          <p className="text-stone-500">Couldn&apos;t load live availability — set a watch and we&apos;ll keep checking.</p>
-        ) : total > 0 ? (
-          <>
-            <p className="font-medium">
-              {(av.bookable ?? 0) > 0 && <span className="text-green-800">🟢 {av.bookable} bookable online</span>}
-              {(av.bookable ?? 0) > 0 && (av.fcfs ?? 0) > 0 && <span className="text-stone-400"> · </span>}
-              {(av.fcfs ?? 0) > 0 && <span className="text-orange-800">🏕️ {av.fcfs} first-come</span>}
-              <span className="text-stone-600"> · {span}</span>
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {av.siteNightDates!.slice(0, 8).map((d) => {
-                const fc = d.status === "Open";
-                return (
-                  <span
-                    key={d.date}
-                    className={`rounded-md px-2 py-1 text-xs ${
-                      fc ? "bg-orange-50 text-orange-900" : "bg-green-50 text-green-900"
-                    }`}
-                  >
-                    {d.date.slice(5)} · {d.count}
-                    {fc ? " FCFS" : ""}
-                  </span>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <p className="text-stone-500">
-            No sites bookable online for {span}. This campground may be first-come-first-served or fully
-            booked — set a watch and we&apos;ll email you if booking opens.
-          </p>
-        )}
-        <p className="mt-2 text-[11px] text-stone-400">
-          Reservation type can vary by season — confirm this campground&apos;s rules on recreation.gov.
-        </p>
-      </div>
-
-      {release && release.windowMonths != null && av.resType === "reservable" && (
-        <div className="mb-3 rounded-lg bg-stone-50 px-3 py-2 text-sm">
-          <p className="font-medium text-stone-700">
-            📅 Reservations open ~{release.windowMonths} month{release.windowMonths !== 1 ? "s" : ""} ahead
-          </p>
-          {release.horizon && (
-            <p className="text-xs text-stone-500">Currently bookable through {mmdd(release.horizon)}.</p>
-          )}
-          {release.windowDays != null && release.horizon && range.start > release.horizon && (
-            <p className="mt-0.5 text-xs text-green-800">
-              Your {mmdd(range.start)} dates should open for booking around{" "}
-              {mmdd(subDays(range.start, release.windowDays))}.
-            </p>
-          )}
-        </div>
-      )}
-
-      {days.length > 0 && (
-        <div className="mb-3">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Forecast</p>
-          <div className="flex gap-2 overflow-x-auto">
-            {days.map((d) => (
-              <div
-                key={d.date}
-                title={d.short}
-                className="flex w-16 flex-shrink-0 flex-col items-center rounded-lg bg-stone-50 px-1 py-2 text-center"
-              >
-                <span className="text-[11px] font-medium text-stone-600">
-                  {new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })}
-                </span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={d.icon} alt={d.short} className="my-1 h-8 w-8 rounded" />
-                <span className="text-xs font-bold text-stone-800">
-                  {d.high != null ? `${d.high}°` : "—"}
-                </span>
-                <span className="text-[11px] text-stone-500">{d.low != null ? `${d.low}°` : "—"}</span>
-              </div>
+        {images.length > 0 && (
+          <div className="mb-3 -mx-1 flex gap-2 overflow-x-auto px-1">
+            {images.slice(0, 8).map((im, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={i}
+                src={im.url}
+                alt={im.title || sel.name}
+                loading="lazy"
+                onClick={() => setLightbox(im.url)}
+                className="h-28 w-44 flex-shrink-0 cursor-pointer rounded-lg object-cover"
+              />
             ))}
           </div>
+        )}
+
+        <h3 className="text-lg font-bold">{sel.name}</h3>
+        {place && <p className="text-sm text-stone-500">{place}</p>}
+
+        {/* Authoritative reservation type from RIDB per-site data. */}
+        {!av.loading && av.resType && av.resType !== "unknown" && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {av.resType === "reservable" && (
+              <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
+                Reservable on recreation.gov
+              </span>
+            )}
+            {av.resType === "fcfs" && (
+              <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-800">
+                First-come-first-served · no reservations
+              </span>
+            )}
+            {av.resType === "mixed" && (
+              <>
+                <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
+                  Part reservable
+                </span>
+                <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-semibold text-orange-800">
+                  Part first-come
+                </span>
+              </>
+            )}
+            {(av.siteTotal ?? 0) > 0 && (
+              <span className="text-xs text-stone-500">
+                {av.reservableSites} reservable / {av.fcfsSites} first-come · {av.siteTotal} sites
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Distinct sites bookable/first-come in the window. When nothing's open we
+            lean on RIDB's authoritative type to say definitively whether it's FCFS
+            or simply fully booked, instead of guessing. */}
+        <div className="my-3 min-h-[44px] text-sm">
+          {av.loading ? (
+            <p className="text-stone-500">Checking live availability…</p>
+          ) : av.error ? (
+            <p className="text-stone-500">Couldn&apos;t load live availability — set a watch and we&apos;ll keep checking.</p>
+          ) : total > 0 ? (
+            <>
+              <p className="font-medium">
+                {bookableSites > 0 && (
+                  <span className="text-green-800">
+                    🟢 {bookableSites} site{bookableSites !== 1 ? "s" : ""} bookable online
+                  </span>
+                )}
+                {bookableSites > 0 && openSites > 0 && <span className="text-stone-400"> · </span>}
+                {openSites > 0 && (
+                  <span className="text-orange-800">
+                    🏕️ {openSites} first-come site{openSites !== 1 ? "s" : ""}
+                  </span>
+                )}
+                <span className="text-stone-600"> · {span}</span>
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {av.siteNightDates!.slice(0, 8).map((d) => {
+                  const fc = d.status === "Open";
+                  return (
+                    <span
+                      key={d.date}
+                      className={`rounded-md px-2 py-1 text-xs ${
+                        fc ? "bg-orange-50 text-orange-900" : "bg-green-50 text-green-900"
+                      }`}
+                    >
+                      {d.date.slice(5)} · {d.count}
+                      {fc ? " FCFS" : ""}
+                    </span>
+                  );
+                })}
+              </div>
+            </>
+          ) : av.resType === "fcfs" ? (
+            <p className="text-stone-700">
+              🏕️ <span className="font-medium">First-come-first-served.</span> This campground isn&apos;t
+              bookable online — sites are claimed in person, so arrive early.
+            </p>
+          ) : av.resType === "reservable" ? (
+            <p className="text-stone-700">
+              <span className="font-medium">Reservable — fully booked for {span}.</span> No sites are open
+              right now. Set a watch and we&apos;ll email you the moment one frees up.
+            </p>
+          ) : av.resType === "mixed" ? (
+            <p className="text-stone-700">
+              Has both reservable and first-come sites; nothing is bookable online for {span}. Set a watch for
+              cancellations, or arrive early for a first-come site.
+            </p>
+          ) : (
+            <p className="text-stone-500">
+              No sites bookable online for {span}. Set a watch and we&apos;ll email you if booking opens.
+            </p>
+          )}
+          {av.resType === "unknown" && (
+            <p className="mt-2 text-[11px] text-stone-400">
+              Reservation type can vary by season — confirm this campground&apos;s rules on recreation.gov.
+            </p>
+          )}
+        </div>
+
+        {release && release.windowMonths != null && av.resType === "reservable" && (
+          <div className="mb-3 rounded-lg bg-stone-50 px-3 py-2 text-sm">
+            <p className="font-medium text-stone-700">
+              📅 Reservations open ~{release.windowMonths} month{release.windowMonths !== 1 ? "s" : ""} ahead
+            </p>
+            {release.horizon && (
+              <p className="text-xs text-stone-500">Currently bookable through {mmdd(release.horizon)}.</p>
+            )}
+            {release.windowDays != null && release.horizon && range.start > release.horizon && (
+              <p className="mt-0.5 text-xs text-green-800">
+                Your {mmdd(range.start)} dates should open for booking around{" "}
+                {mmdd(subDays(range.start, release.windowDays))}.
+              </p>
+            )}
+          </div>
+        )}
+
+        {days.length > 0 && (
+          <div className="mb-3">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Forecast</p>
+            <div className="flex gap-2 overflow-x-auto">
+              {days.map((d) => (
+                <div
+                  key={d.date}
+                  title={d.short}
+                  className="flex w-16 flex-shrink-0 flex-col items-center rounded-lg bg-stone-50 px-1 py-2 text-center"
+                >
+                  <span className="text-[11px] font-medium text-stone-600">
+                    {new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" })}
+                  </span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={d.icon} alt={d.short} className="my-1 h-8 w-8 rounded" />
+                  <span className="text-xs font-bold text-stone-800">
+                    {d.high != null ? `${d.high}°` : "—"}
+                  </span>
+                  <span className="text-[11px] text-stone-500">{d.low != null ? `${d.low}°` : "—"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <a
+          href={watchHref}
+          className="block w-full rounded-xl bg-green-700 py-3.5 text-center font-bold text-white hover:bg-green-800"
+        >
+          🔔 Watch availability
+        </a>
+        <a
+          href={av.bookingUrl ?? `https://www.recreation.gov/camping/campgrounds/${sel.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 block w-full rounded-xl border border-green-700 py-2.5 text-center text-sm font-medium text-green-700 hover:bg-green-50"
+        >
+          Open on recreation.gov ↗
+        </a>
+      </div>
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightbox(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightbox} alt={sel.name} className="max-h-[90vh] max-w-full rounded-lg object-contain" />
         </div>
       )}
-
-      <a
-        href={watchHref}
-        className="block w-full rounded-xl bg-green-700 py-3.5 text-center font-bold text-white hover:bg-green-800"
-      >
-        🔔 Watch availability
-      </a>
-      <a
-        href={av.bookingUrl ?? `https://www.recreation.gov/camping/campgrounds/${sel.id}`}
-        target="_blank"
-        rel="noreferrer"
-        className="mt-2 block w-full rounded-xl border border-green-700 py-2.5 text-center text-sm font-medium text-green-700 hover:bg-green-50"
-      >
-        Open on recreation.gov ↗
-      </a>
-    </div>
+    </>
   );
 }

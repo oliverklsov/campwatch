@@ -52,6 +52,9 @@ export async function GET(request: Request, { params }: { params: { id: string }
       totalOpenings: openings.length,
       bookable: openings.filter((o) => o.status === "Available").length,
       fcfs: openings.filter((o) => o.status === "Open").length,
+      // Distinct sites (not site-nights) for a clear headline count.
+      bookableSites: new Set(openings.filter((o) => o.status === "Available").map((o) => o.site)).size,
+      openSites: new Set(openings.filter((o) => o.status === "Open").map((o) => o.site)).size,
       siteNightDates: dates,
       bookingUrl: bookingUrl(id),
     });
