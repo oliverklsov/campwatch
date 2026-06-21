@@ -5,3 +5,7 @@ node_modules/
 next-env.d.ts
 
 .vercel
+
+# Large MVUM tiling artifacts (generated locally, hosted on Supabase Storage)
+mvum-national.geojson
+*.pmtiles

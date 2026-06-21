@@ -9,12 +9,16 @@ import maplibregl, {
 import "maplibre-gl/dist/maplibre-gl.css";
 import TabBar from "@/components/TabBar";
 import { createClient } from "@/lib/supabase/client";
+import { Protocol as PMTilesProtocol } from "pmtiles";
 
 const GREEN = "#2d6a4f";
 const TAN = "#b08968";
 const PURPLE = "#6d597a";
 const MAGENTA = "#e0218a"; // dispersed roads + bubbles
 const BLUE = "#2563eb"; // permit lotteries
+const MVUM_TILES_URL =
+  "pmtiles://https://pfwuvjyaxrefxgcxdsoa.supabase.co/storage/v1/object/public/tiles/mvum.pmtiles";
+let pmtilesRegistered = false;
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY;
 const ROAD_MIN_ZOOM = 9; // dispersed roads only load when zoomed in this far
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -149,56 +153,6 @@ export default function ExplorePage() {
   useEffect(() => setMounted(true), []);
 
   // ---- dispersed-layer data loaders (stable: only depend on the supabase client) ----
-  const loadRoads = useMemo(
-    () => async (map: MlMap) => {
-      const src = map.getSource("mvum") as GeoJSONSource | undefined;
-      if (!src) return;
-      if (map.getZoom() < ROAD_MIN_ZOOM) {
-        src.setData(EMPTY_FC);
-        return;
-      }
-      const b = map.getBounds();
-      const { data } = await supabase
-        .from("mvum_roads")
-        .select("id,name,forest,season,geom")
-        .lte("min_lng", b.getEast())
-        .gte("max_lng", b.getWest())
-        .lte("min_lat", b.getNorth())
-        .gte("max_lat", b.getSouth())
-        .limit(1000);
-      const rows = (data ?? []) as {
-        id: string;
-        name: string;
-        forest: string | null;
-        season: string | null;
-        geom: GeoJSON.Geometry;
-      }[];
-      src.setData({
-        type: "FeatureCollection",
-        features: rows.map((r) => ({
-          type: "Feature" as const,
-          geometry: r.geom,
-          properties: { id: r.id, name: r.name, forest: r.forest, season: r.season },
-        })),
-      });
-    },
-    [supabase]
-  );
-
-  // All AZ dispersed-road points (centers), loaded once; the map clusters them so
-  // dots appear even when zoomed out.
-  const loadDispersedPoints = useMemo(
-    () => async (map: MlMap) => {
-      const src = map.getSource("mvum-bubbles") as GeoJSONSource | undefined;
-      if (!src) return;
-      const fc = await fetch("/api/dispersed/points")
-        .then((r) => r.json())
-        .catch(() => null);
-      if (fc && fc.features) src.setData(fc as GeoJSON.FeatureCollection);
-    },
-    []
-  );
-
   const loadSpots = useMemo(
     () => async (map: MlMap) => {
       const src = map.getSource("spots") as GeoJSONSource | undefined;
@@ -238,6 +192,10 @@ export default function ExplorePage() {
   // ---- init map once (after client mount, when the container exists) ----
   useEffect(() => {
     if (!mounted || mapRef.current || !containerRef.current) return;
+    if (!pmtilesRegistered) {
+      maplibregl.addProtocol("pmtiles", new PMTilesProtocol().tile);
+      pmtilesRegistered = true;
+    }
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: OSM_STYLE,
@@ -277,65 +235,33 @@ export default function ExplorePage() {
       });
       map.addLayer({ id: "sat", type: "raster", source: "sat", layout: { visibility: "visible" } });
 
-      // Dispersed-camping MVUM roads (magenta). White halo = selected-road highlight.
-      // The bubble source is clustered so dots show even when zoomed out; the road
-      // lines load per-viewport at zoom >= ROAD_MIN_ZOOM.
-      map.addSource("mvum", { type: "geojson", data: EMPTY_FC });
-      map.addSource("mvum-bubbles", {
-        type: "geojson",
-        data: EMPTY_FC,
-        cluster: true,
-        clusterRadius: 50,
-        clusterMaxZoom: ROAD_MIN_ZOOM,
-      });
+      // Dispersed-camping MVUM roads — nationwide vector tiles (PMTiles on Supabase
+      // Storage). White halo = selected-road highlight; magenta = all roads. Source
+      // layer name "mvum" matches the tippecanoe -l flag.
+      map.addSource("mvum", { type: "vector", url: MVUM_TILES_URL });
       map.addLayer({
         id: "mvum-hl",
         type: "line",
         source: "mvum",
+        "source-layer": "mvum",
         filter: ["==", ["get", "id"], "__none__"],
         layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
         paint: {
           "line-color": "#ffffff",
           "line-opacity": 0.95,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 6, 15, 12],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 6, 15, 12],
         },
       });
       map.addLayer({
         id: "mvum",
         type: "line",
         source: "mvum",
+        "source-layer": "mvum",
         layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
         paint: {
           "line-color": MAGENTA,
-          "line-opacity": 0.95,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.6, 12, 3, 15, 5],
-        },
-      });
-      map.addLayer({
-        id: "mvum-clusters",
-        type: "circle",
-        source: "mvum-bubbles",
-        filter: ["has", "point_count"],
-        layout: { visibility: "none" },
-        paint: {
-          "circle-color": MAGENTA,
-          "circle-opacity": 0.85,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#fff",
-          "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24, 750, 32],
-        },
-      });
-      map.addLayer({
-        id: "mvum-bubbles",
-        type: "circle",
-        source: "mvum-bubbles",
-        filter: ["!", ["has", "point_count"]],
-        layout: { visibility: "none" },
-        paint: {
-          "circle-color": MAGENTA,
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 3.5, 13, 6.5],
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1.5,
+          "line-opacity": 0.9,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 9, 1.6, 12, 3, 15, 5],
         },
       });
 
@@ -418,15 +344,7 @@ export default function ExplorePage() {
             map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom });
           });
       });
-      map.on("click", "mvum-clusters", (e) => {
-        const f = map.queryRenderedFeatures(e.point, { layers: ["mvum-clusters"] })[0];
-        const clusterId = f.properties?.cluster_id;
-        (map.getSource("mvum-bubbles") as GeoJSONSource)
-          .getClusterExpansionZoom(clusterId)
-          .then((zoom) => {
-            map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom });
-          });
-      });
+      // (dispersed roads come from vector tiles now — no clusters to expand)
       map.on("click", "pts", (e) => {
         if (addModeRef.current) return;
         const f = e.features?.[0];
@@ -462,11 +380,10 @@ export default function ExplorePage() {
           lat: Number(c[1]),
         });
       });
-      map.on("click", "mvum-bubbles", (e) => {
+      map.on("click", "mvum", (e) => {
         if (addModeRef.current) return;
         const f = e.features?.[0];
         const p = f?.properties ?? {};
-        const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
         setSelected(null);
         setSelectedSpot(null);
         setSelectedLottery(null);
@@ -475,8 +392,8 @@ export default function ExplorePage() {
           name: p.name ? String(p.name) : "",
           forest: p.forest ? String(p.forest) : null,
           season: p.season ? String(p.season) : null,
-          lng: Number(c[0]),
-          lat: Number(c[1]),
+          lng: e.lngLat.lng,
+          lat: e.lngLat.lat,
         });
       });
       map.on("click", "lottery-pts", (e) => {
@@ -501,7 +418,7 @@ export default function ExplorePage() {
           lat: Number(c[1]),
         });
       });
-      for (const layer of ["pts", "clusters", "spot-pts", "mvum-bubbles", "mvum-clusters", "lottery-pts"]) {
+      for (const layer of ["pts", "clusters", "spot-pts", "mvum", "lottery-pts"]) {
         map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
         map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = addModeRef.current ? "crosshair" : ""));
       }
@@ -513,7 +430,7 @@ export default function ExplorePage() {
           return;
         }
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: ["pts", "clusters", "spot-pts", "mvum-bubbles", "mvum-clusters", "lottery-pts"],
+          layers: ["pts", "clusters", "spot-pts", "mvum", "lottery-pts"],
         });
         if (hits.length === 0) {
           setSelected(null);
@@ -525,7 +442,6 @@ export default function ExplorePage() {
       // Reload viewport roads + track zoom as the user pans.
       map.on("moveend", () => {
         setZoom(map.getZoom());
-        if (showDispersedRef.current) loadRoads(map);
       });
       setReady(true);
     });
@@ -534,7 +450,7 @@ export default function ExplorePage() {
       map.remove();
       mapRef.current = undefined;
     };
-  }, [mounted, supabase, loadRoads]);
+  }, [mounted, supabase]);
 
   // ---- apply chip filter (re-cluster on filtered data) ----
   useEffect(() => {
@@ -561,17 +477,15 @@ export default function ExplorePage() {
     const map = mapRef.current;
     if (!map || !ready) return;
     const vis = showDispersed ? "visible" : "none";
-    for (const id of ["mvum", "mvum-hl", "mvum-clusters", "mvum-bubbles", "spot-pts"])
+    for (const id of ["mvum", "mvum-hl", "spot-pts"])
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
     if (showDispersed) {
-      loadDispersedPoints(map);
-      loadRoads(map);
       loadSpots(map);
     } else {
       setAddMode(false);
       setSelectedRoad(null);
     }
-  }, [showDispersed, ready, loadRoads, loadSpots, loadDispersedPoints]);
+  }, [showDispersed, ready, loadSpots]);
 
   // Toggle the lotteries layer; load pins when turned on.
   useEffect(() => {
