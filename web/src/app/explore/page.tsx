@@ -108,6 +108,7 @@ type Avail = {
   openSites?: number;
   siteNightDates?: { date: string; count: number; status?: string }[];
   bookingUrl?: string;
+  bookingLabel?: string;
 };
 type WxDay = {
   date: string;
@@ -753,8 +754,8 @@ function Chip({
 function RoadSheet({ road, onClose }: { road: Road; onClose: () => void }) {
   const label = road.name ? (/^[0-9]/.test(road.name) ? `Forest Road ${road.name}` : road.name) : "Forest road";
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
         <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
         <button
           onClick={onClose}
@@ -1003,8 +1004,8 @@ function SpotSheet({
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+    <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
         <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
         <button
           onClick={onClose}
@@ -1284,8 +1285,8 @@ function Sheet({
 
   return (
     <>
-      <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-        <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+        <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
           <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
           <button
             onClick={onClose}
@@ -1320,7 +1321,7 @@ function Sheet({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {av.resType === "reservable" && (
               <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
-                Reservable on recreation.gov
+                Reservable on {av.bookingLabel ?? "recreation.gov"}
               </span>
             )}
             {av.resType === "fcfs" && (
@@ -1470,7 +1471,7 @@ function Sheet({
           rel="noreferrer"
           className="mt-2 block w-full rounded-xl border border-green-700 py-2.5 text-center text-sm font-medium text-green-700 hover:bg-green-50"
         >
-          Open on recreation.gov ↗
+          Open on {av.bookingLabel ?? "recreation.gov"} ↗
         </a>
       </div>
 
@@ -1621,8 +1622,8 @@ function LotterySheet({ lottery, onClose }: { lottery: Lottery; onClose: () => v
     new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const place = [lottery.area, lottery.state].filter(Boolean).join(", ");
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
         <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
         <button
           onClick={onClose}

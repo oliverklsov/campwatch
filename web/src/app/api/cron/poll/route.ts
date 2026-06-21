@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
-import { fetchOpenings, bookingUrl } from "@/lib/recgov";
+import { fetchOpeningsForFacility, bookingUrlForFacility } from "@/lib/sources";
 import type { Opening, Watch } from "@/lib/types";
 
 export const maxDuration = 300; // Vercel: allow up to 5 min
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
       const end = group
         .map((w) => addDays(w.end_date, w.flex_days || 0))
         .reduce((a, b) => (b > a ? b : a));
-      const openings = await fetchOpenings(facilityId, start, end);
+      const openings = await fetchOpeningsForFacility(facilityId, start, end);
 
       // Diff vs last snapshot (new openings only — that's what's alert-worthy).
       const { data: snap } = await db
@@ -120,7 +120,7 @@ async function alertWatch(
   const ok = await sendEmail(
     email,
     `🏕️ ${toSend.length} opening${toSend.length > 1 ? "s" : ""} at ${w.facility_name || w.facility_id}`,
-    `New campsite availability for your watch (${w.start_date} → ${w.end_date}):\n\n${lines}\n\nBook now: ${bookingUrl(w.facility_id)}\n\nOpenings get re-grabbed fast — go!`
+    `New campsite availability for your watch (${w.start_date} → ${w.end_date}):\n\n${lines}\n\nBook now: ${bookingUrlForFacility(w.facility_id)}\n\nOpenings get re-grabbed fast — go!`
   );
   if (!ok) return 0;
 
