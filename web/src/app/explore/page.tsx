@@ -14,6 +14,7 @@ const GREEN = "#2d6a4f";
 const TAN = "#b08968";
 const PURPLE = "#6d597a";
 const MAGENTA = "#e0218a"; // dispersed roads + bubbles
+const BLUE = "#2563eb"; // permit lotteries
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY;
 const ROAD_MIN_ZOOM = 9; // dispersed roads only load when zoomed in this far
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -23,15 +24,6 @@ const isoPlus = (days: number) => new Date(Date.now() + days * 86400_000).toISOS
 const mmdd = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const subDays = (d: string, n: number) =>
   new Date(Date.parse(d + "T00:00:00Z") - n * 86400_000).toISOString().slice(0, 10);
-
-// Pick a representative point on a line for its bubble marker.
-function midpoint(geom: GeoJSON.Geometry): [number, number] {
-  let coords: number[][] = [];
-  if (geom.type === "LineString") coords = geom.coordinates as number[][];
-  else if (geom.type === "MultiLineString") coords = (geom.coordinates as number[][][]).flat();
-  if (coords.length === 0) return [0, 0];
-  return coords[Math.floor(coords.length / 2)] as [number, number];
-}
 
 // Teardrop map pin with a white tent inside, in the given color.
 function pinSvg(color: string) {
@@ -77,6 +69,19 @@ const OSM_STYLE: StyleSpecification = {
 type Selected = { id: string; name: string; reservable: boolean; city: string; state: string; lat: number; lng: number };
 type Spot = { id: string; name: string; notes: string | null; user_id: string; lat: number; lng: number };
 type Road = { id: string; name: string; forest: string | null; season: string | null; lat: number; lng: number };
+type Lottery = {
+  id: string;
+  name: string;
+  area: string | null;
+  state: string | null;
+  apply_open: string | null;
+  apply_close: string | null;
+  results_date: string | null;
+  cadence: string | null;
+  url: string | null;
+  lat: number;
+  lng: number;
+};
 type Rating = {
   user_id: string;
   stars: number | null;
@@ -119,9 +124,11 @@ export default function ExplorePage() {
   const [selected, setSelected] = useState<Selected | null>(null);
   const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null);
   const [selectedRoad, setSelectedRoad] = useState<Road | null>(null);
+  const [selectedLottery, setSelectedLottery] = useState<Lottery | null>(null);
   const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [show, setShow] = useState({ reservable: true, fcfs: true });
   const [showDispersed, setShowDispersed] = useState(false);
+  const [showLotteries, setShowLotteries] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [range, setRange] = useState({ start: isoToday(), end: isoPlus(30) });
@@ -145,11 +152,9 @@ export default function ExplorePage() {
   const loadRoads = useMemo(
     () => async (map: MlMap) => {
       const src = map.getSource("mvum") as GeoJSONSource | undefined;
-      const bub = map.getSource("mvum-bubbles") as GeoJSONSource | undefined;
-      if (!src || !bub) return;
+      if (!src) return;
       if (map.getZoom() < ROAD_MIN_ZOOM) {
         src.setData(EMPTY_FC);
-        bub.setData(EMPTY_FC);
         return;
       }
       const b = map.getBounds();
@@ -168,21 +173,30 @@ export default function ExplorePage() {
         season: string | null;
         geom: GeoJSON.Geometry;
       }[];
-      const props = (r: (typeof rows)[number]) => ({ id: r.id, name: r.name, forest: r.forest, season: r.season });
       src.setData({
-        type: "FeatureCollection",
-        features: rows.map((r) => ({ type: "Feature" as const, geometry: r.geom, properties: props(r) })),
-      });
-      bub.setData({
         type: "FeatureCollection",
         features: rows.map((r) => ({
           type: "Feature" as const,
-          geometry: { type: "Point" as const, coordinates: midpoint(r.geom) },
-          properties: props(r),
+          geometry: r.geom,
+          properties: { id: r.id, name: r.name, forest: r.forest, season: r.season },
         })),
       });
     },
     [supabase]
+  );
+
+  // All AZ dispersed-road points (centers), loaded once; the map clusters them so
+  // dots appear even when zoomed out.
+  const loadDispersedPoints = useMemo(
+    () => async (map: MlMap) => {
+      const src = map.getSource("mvum-bubbles") as GeoJSONSource | undefined;
+      if (!src) return;
+      const fc = await fetch("/api/dispersed/points")
+        .then((r) => r.json())
+        .catch(() => null);
+      if (fc && fc.features) src.setData(fc as GeoJSON.FeatureCollection);
+    },
+    []
   );
 
   const loadSpots = useMemo(
@@ -197,6 +211,24 @@ export default function ExplorePage() {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
         properties: { id: s.id, name: s.name, notes: s.notes, user_id: s.user_id },
+      }));
+      src.setData({ type: "FeatureCollection", features });
+    },
+    [supabase]
+  );
+
+  const loadLotteries = useMemo(
+    () => async (map: MlMap) => {
+      const src = map.getSource("lotteries") as GeoJSONSource | undefined;
+      if (!src) return;
+      const { data } = await supabase
+        .from("lotteries")
+        .select("id,name,area,state,apply_open,apply_close,results_date,cadence,url,lat,lng")
+        .not("lat", "is", null);
+      const features = (data ?? []).map((l: Lottery) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [l.lng, l.lat] },
+        properties: l,
       }));
       src.setData({ type: "FeatureCollection", features });
     },
@@ -245,11 +277,17 @@ export default function ExplorePage() {
       });
       map.addLayer({ id: "sat", type: "raster", source: "sat", layout: { visibility: "visible" } });
 
-      // Dispersed-camping MVUM roads (magenta), under the campground pins. A white
-      // halo layer (filtered to the selected road) sits below for the highlight; a
-      // magenta bubble sits on each road as a tap target.
+      // Dispersed-camping MVUM roads (magenta). White halo = selected-road highlight.
+      // The bubble source is clustered so dots show even when zoomed out; the road
+      // lines load per-viewport at zoom >= ROAD_MIN_ZOOM.
       map.addSource("mvum", { type: "geojson", data: EMPTY_FC });
-      map.addSource("mvum-bubbles", { type: "geojson", data: EMPTY_FC });
+      map.addSource("mvum-bubbles", {
+        type: "geojson",
+        data: EMPTY_FC,
+        cluster: true,
+        clusterRadius: 50,
+        clusterMaxZoom: ROAD_MIN_ZOOM,
+      });
       map.addLayer({
         id: "mvum-hl",
         type: "line",
@@ -274,9 +312,24 @@ export default function ExplorePage() {
         },
       });
       map.addLayer({
+        id: "mvum-clusters",
+        type: "circle",
+        source: "mvum-bubbles",
+        filter: ["has", "point_count"],
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": MAGENTA,
+          "circle-opacity": 0.85,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+          "circle-radius": ["step", ["get", "point_count"], 13, 25, 18, 100, 24, 750, 32],
+        },
+      });
+      map.addLayer({
         id: "mvum-bubbles",
         type: "circle",
         source: "mvum-bubbles",
+        filter: ["!", ["has", "point_count"]],
         layout: { visibility: "none" },
         paint: {
           "circle-color": MAGENTA,
@@ -311,6 +364,7 @@ export default function ExplorePage() {
         loadPinImage(map, "pin-green", GREEN),
         loadPinImage(map, "pin-tan", TAN),
         loadPinImage(map, "pin-purple", PURPLE),
+        loadPinImage(map, "pin-blue", BLUE),
       ]);
       map.addLayer({
         id: "pts",
@@ -340,10 +394,34 @@ export default function ExplorePage() {
         },
       });
 
+      // Permit/lottery locations (blue pins), toggled on.
+      map.addSource("lotteries", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "lottery-pts",
+        type: "symbol",
+        source: "lotteries",
+        layout: {
+          "icon-image": "pin-blue",
+          "icon-size": 0.95,
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          visibility: "none",
+        },
+      });
+
       map.on("click", "clusters", (e) => {
         const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
         const clusterId = f.properties?.cluster_id;
         (map.getSource("facilities") as GeoJSONSource)
+          .getClusterExpansionZoom(clusterId)
+          .then((zoom) => {
+            map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom });
+          });
+      });
+      map.on("click", "mvum-clusters", (e) => {
+        const f = map.queryRenderedFeatures(e.point, { layers: ["mvum-clusters"] })[0];
+        const clusterId = f.properties?.cluster_id;
+        (map.getSource("mvum-bubbles") as GeoJSONSource)
           .getClusterExpansionZoom(clusterId)
           .then((zoom) => {
             map.easeTo({ center: (f.geometry as GeoJSON.Point).coordinates as [number, number], zoom });
@@ -356,6 +434,7 @@ export default function ExplorePage() {
         const coords = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
         setSelectedSpot(null);
         setSelectedRoad(null);
+        setSelectedLottery(null);
         setSelected({
           id: String(p.id),
           name: String(p.name ?? "Campground"),
@@ -373,6 +452,7 @@ export default function ExplorePage() {
         const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
         setSelected(null);
         setSelectedRoad(null);
+        setSelectedLottery(null);
         setSelectedSpot({
           id: String(p.id),
           name: String(p.name ?? "Dispersed spot"),
@@ -389,6 +469,7 @@ export default function ExplorePage() {
         const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
         setSelected(null);
         setSelectedSpot(null);
+        setSelectedLottery(null);
         setSelectedRoad({
           id: String(p.id),
           name: p.name ? String(p.name) : "",
@@ -398,7 +479,29 @@ export default function ExplorePage() {
           lat: Number(c[1]),
         });
       });
-      for (const layer of ["pts", "clusters", "spot-pts", "mvum-bubbles"]) {
+      map.on("click", "lottery-pts", (e) => {
+        if (addModeRef.current) return;
+        const f = e.features?.[0];
+        const p = f?.properties ?? {};
+        const c = (f?.geometry as GeoJSON.Point | undefined)?.coordinates ?? [0, 0];
+        setSelected(null);
+        setSelectedSpot(null);
+        setSelectedRoad(null);
+        setSelectedLottery({
+          id: String(p.id),
+          name: p.name ? String(p.name) : "",
+          area: p.area ? String(p.area) : null,
+          state: p.state ? String(p.state) : null,
+          apply_open: p.apply_open ? String(p.apply_open) : null,
+          apply_close: p.apply_close ? String(p.apply_close) : null,
+          results_date: p.results_date ? String(p.results_date) : null,
+          cadence: p.cadence ? String(p.cadence) : null,
+          url: p.url ? String(p.url) : null,
+          lng: Number(c[0]),
+          lat: Number(c[1]),
+        });
+      });
+      for (const layer of ["pts", "clusters", "spot-pts", "mvum-bubbles", "mvum-clusters", "lottery-pts"]) {
         map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
         map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = addModeRef.current ? "crosshair" : ""));
       }
@@ -410,12 +513,13 @@ export default function ExplorePage() {
           return;
         }
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: ["pts", "clusters", "spot-pts", "mvum-bubbles"],
+          layers: ["pts", "clusters", "spot-pts", "mvum-bubbles", "mvum-clusters", "lottery-pts"],
         });
         if (hits.length === 0) {
           setSelected(null);
           setSelectedSpot(null);
           setSelectedRoad(null);
+          setSelectedLottery(null);
         }
       });
       // Reload viewport roads + track zoom as the user pans.
@@ -457,16 +561,27 @@ export default function ExplorePage() {
     const map = mapRef.current;
     if (!map || !ready) return;
     const vis = showDispersed ? "visible" : "none";
-    for (const id of ["mvum", "mvum-hl", "mvum-bubbles", "spot-pts"])
+    for (const id of ["mvum", "mvum-hl", "mvum-clusters", "mvum-bubbles", "spot-pts"])
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
     if (showDispersed) {
+      loadDispersedPoints(map);
       loadRoads(map);
       loadSpots(map);
     } else {
       setAddMode(false);
       setSelectedRoad(null);
     }
-  }, [showDispersed, ready, loadRoads, loadSpots]);
+  }, [showDispersed, ready, loadRoads, loadSpots, loadDispersedPoints]);
+
+  // Toggle the lotteries layer; load pins when turned on.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (map.getLayer("lottery-pts"))
+      map.setLayoutProperty("lottery-pts", "visibility", showLotteries ? "visible" : "none");
+    if (showLotteries) loadLotteries(map);
+    else setSelectedLottery(null);
+  }, [showLotteries, ready, loadLotteries]);
 
   // Highlight the selected dispersed road (white halo filtered to its id).
   useEffect(() => {
@@ -563,6 +678,9 @@ export default function ExplorePage() {
             ➕ Add spot
           </Chip>
         )}
+        <Chip on={showLotteries} onClick={() => setShowLotteries((v) => !v)} color={BLUE}>
+          🎟️ Lotteries
+        </Chip>
       </div>
 
       {/* date-range control — drives the availability shown in each pin's sheet */}
@@ -598,7 +716,7 @@ export default function ExplorePage() {
       {/* dispersed zoom hint */}
       {showDispersed && !addMode && zoom < ROAD_MIN_ZOOM && (
         <div className="fixed left-1/2 top-[112px] z-20 -translate-x-1/2 rounded-full bg-white/95 px-3 py-1.5 text-xs text-stone-600 shadow">
-          Zoom in to see dispersed forest roads
+          Zoom in to see individual roads
         </div>
       )}
 
@@ -609,6 +727,9 @@ export default function ExplorePage() {
         <LegendRow color={MAGENTA}>Dispersed roads (MVUM)</LegendRow>
         <LegendRow color={PURPLE} pin>
           Saved dispersed spots
+        </LegendRow>
+        <LegendRow color={BLUE} pin>
+          Permit lotteries
         </LegendRow>
         {showDispersed && (
           <p className="mt-1 border-t border-stone-200 pt-1 text-[10px] text-stone-400">
@@ -656,6 +777,9 @@ export default function ExplorePage() {
         />
       )}
       {selectedRoad && <RoadSheet key={selectedRoad.id} road={selectedRoad} onClose={() => setSelectedRoad(null)} />}
+      {selectedLottery && (
+        <LotterySheet key={selectedLottery.id} lottery={selectedLottery} onClose={() => setSelectedLottery(null)} />
+      )}
       {draft && <AddSpotForm userId={userId} onCancel={() => setDraft(null)} onSave={saveSpot} />}
 
       <TabBar />
@@ -1574,6 +1698,58 @@ function CampgroundReviews({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function LotterySheet({ lottery, onClose }: { lottery: Lottery; onClose: () => void }) {
+  const fmt = (d: string) =>
+    new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const place = [lottery.area, lottery.state].filter(Boolean).join(", ");
+  return (
+    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-3 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
+      <div className="sticky top-0 z-10 -mx-5 -mt-3 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
+        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+      <h3 className="text-lg font-bold">{lottery.name}</h3>
+      <p className="text-sm" style={{ color: BLUE }}>
+        🎟️ Permit lottery{place ? ` · ${place}` : ""}
+      </p>
+      <div className="mt-2 space-y-1 text-sm text-stone-700">
+        {lottery.apply_open ? (
+          <p>
+            <span className="font-medium">Apply</span> {fmt(lottery.apply_open)}
+            {lottery.apply_close ? ` – ${fmt(lottery.apply_close)}` : ""}
+            {lottery.results_date ? ` · Results ${fmt(lottery.results_date)}` : ""}
+          </p>
+        ) : lottery.cadence ? (
+          <p className="text-stone-600">{lottery.cadence}</p>
+        ) : null}
+        {lottery.apply_open && lottery.cadence && <p className="text-xs text-stone-500">{lottery.cadence}</p>}
+      </div>
+      {lottery.url && (
+        <a
+          href={lottery.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 block w-full rounded-xl border border-stone-300 py-2.5 text-center text-sm font-medium text-stone-700 hover:bg-stone-50"
+        >
+          Details &amp; apply ↗
+        </a>
+      )}
+      <a
+        href="/lotteries"
+        className="mt-2 block w-full rounded-xl bg-green-700 py-2.5 text-center text-sm font-bold text-white hover:bg-green-800"
+      >
+        Follow for reminders
+      </a>
     </div>
   );
 }
