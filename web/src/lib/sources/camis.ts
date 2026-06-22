@@ -29,7 +29,9 @@ export const CAMIS_TENANTS: Record<string, CamisTenant> = {
   wa: { host: "https://washington.goingtocamp.com", name: "Washington State Parks", abbr: "WA" },
   wi: { host: "https://wisconsin.goingtocamp.com", name: "Wisconsin State Parks", abbr: "WI" },
   mi: { host: "https://midnrreservations.com", name: "Michigan State Parks", abbr: "MI" },
-  md: { host: "https://parkreservations.maryland.gov", name: "Maryland State Parks", abbr: "MD" },
+  // No MD here: Maryland State Parks runs on ReserveAmerica/Aspira (.do servlet
+  // endpoints at parkreservations.maryland.gov), NOT GoingToCamp. It would need
+  // the (deferred, anti-bot) ReserveAmerica adapter, not this one.
 };
 
 function camisHeaders(host: string): Record<string, string> {
