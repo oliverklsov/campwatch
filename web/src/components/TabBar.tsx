@@ -14,7 +14,7 @@ const tabs = [
 export default function TabBar() {
   const path = usePathname();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 flex h-16 border-t border-stone-200 bg-white">
+    <nav className="fixed inset-x-0 bottom-0 z-40 flex h-16 border-t border-stone-200 bg-white md:hidden">
       {tabs.map((t) => {
         const active = path === t.href || (t.href !== "/explore" && path?.startsWith(t.href));
         const cls = "flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px]";
@@ -24,7 +24,7 @@ export default function TabBar() {
             href={t.href}
             className={`${cls} ${active ? "font-semibold text-green-700" : "text-stone-500"}`}
           >
-            <span className="text-xl leading-none">{t.icon}</span>
+            <span className="text-xl leading-none" aria-hidden="true">{t.icon}</span>
             {t.label}
           </Link>
         );

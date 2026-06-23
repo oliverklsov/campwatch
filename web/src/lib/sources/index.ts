@@ -91,7 +91,14 @@ export type AvailabilityResult = {
   error?: string;
 };
 
-function aggregate(
+// Short-TTL memo so repeated taps on a state-park pin are instant and we don't
+// re-walk the upstream tree each time. Per serverless instance; ample for the
+// bottom-sheet use case (availability doesn't change second-to-second).
+type StateParkAvailCacheEntry = { at: number; val: AvailabilityResult };
+const stateParkAvailCache = new Map<string, StateParkAvailCacheEntry>();
+const AVAIL_TTL_MS = 60_000;
+
+export function aggregate(
   id: string,
   start: string,
   end: string,
@@ -125,13 +132,17 @@ export async function getAvailability(id: string, start: string, end: string): P
 
   const src = sourceOf(id);
   if (src === "usedirect" || src === "camis") {
+    const cacheKey = `${id}|${start}|${end}`;
+    const hit = stateParkAvailCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < AVAIL_TTL_MS) return hit.val;
+    let result: AvailabilityResult;
     try {
       const { openings, siteTotal } =
         src === "usedirect"
           ? await usedirectSiteSummary(id, start, end)
           : await camisSiteSummary(id, start, end);
       // State-park systems are fully reservable (no FCFS concept exposed).
-      return {
+      result = {
         facilityId: id,
         window,
         resType: "reservable",
@@ -143,7 +154,7 @@ export async function getAvailability(id: string, start: string, end: string): P
         bookingLabel,
       };
     } catch (e) {
-      return {
+      result = {
         facilityId: id,
         window,
         resType: "reservable",
@@ -161,6 +172,8 @@ export async function getAvailability(id: string, start: string, end: string): P
         error: e instanceof Error ? e.message : "availability fetch failed",
       };
     }
+    if (!result.error) stateParkAvailCache.set(cacheKey, { at: Date.now(), val: result });
+    return result;
   }
 
   // recreation.gov: authoritative reservation type from RIDB + live availability.

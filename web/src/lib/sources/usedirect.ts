@@ -84,8 +84,6 @@ type Slice = { Date?: string; IsFree?: boolean; IsBlocked?: boolean; IsWalkin?: 
 type Unit = { UnitId?: number; Name?: string; ShortName?: string; Slices?: Record<string, Slice> };
 type GridResponse = { Facility?: { Units?: Record<string, Unit>; UnitCount?: number } };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -145,16 +143,22 @@ export async function usedirectSiteSummary(
   if (!cfg) throw new Error(`unknown usedirect state: ${p.state}`);
 
   const CHUNK = 13; // request ~2-week grids
+  // Build the chunk windows, then fetch them all in parallel.
+  const chunkStarts: string[] = [];
+  for (let cursor = start, guard = 0; cursor <= end && guard < 40; cursor = addDays(cursor, CHUNK), guard++) {
+    chunkStarts.push(cursor);
+  }
+  const grids = await Promise.all(
+    chunkStarts.map((s) =>
+      gridChunk(cfg, p.facilityId, s, Math.min(CHUNK, Math.max(1, dayDiff(s, end) + 1))).catch(() => null)
+    )
+  );
+
   const seen = new Set<string>();
   const openings: Opening[] = [];
   const units = new Set<string>();
-
-  let cursor = start;
-  let guard = 0;
-  while (cursor <= end && guard++ < 40) {
-    const remaining = dayDiff(cursor, end) + 1;
-    const nights = Math.min(CHUNK, Math.max(1, remaining));
-    const grid = await gridChunk(cfg, p.facilityId, cursor, nights);
+  for (const grid of grids) {
+    if (!grid) continue;
     const unitMap = grid.Facility?.Units ?? {};
     for (const [uid, unit] of Object.entries(unitMap)) {
       const site = (unit.Name || unit.ShortName || uid).toString().trim();
@@ -171,8 +175,6 @@ export async function usedirectSiteSummary(
         }
       }
     }
-    cursor = addDays(cursor, CHUNK);
-    await sleep(120); // politeness between chunks
   }
 
   return { openings, siteTotal: units.size };

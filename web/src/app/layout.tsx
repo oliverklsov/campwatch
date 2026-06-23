@@ -31,6 +31,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <nav className="flex items-center gap-2.5 text-[13px] sm:gap-4 sm:text-sm">
               <a href="/explore" className="whitespace-nowrap hover:underline">Explore</a>
               <a href="/dashboard" className="whitespace-nowrap hover:underline">Watches</a>
+              <a href="/lotteries" className="hidden whitespace-nowrap hover:underline md:inline">Lotteries</a>
               {user ? (
                 <>
                   <a href="/profile" className="whitespace-nowrap hover:underline">Profile</a>

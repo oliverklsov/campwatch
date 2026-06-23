@@ -68,7 +68,6 @@ export function camisBookingUrl(id: string): string {
   return t ? t.host + "/" : "https://www.recreation.gov/";
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function addDays(d: string, n: number): string {
   return new Date(Date.parse(d + "T00:00:00Z") + n * 86400_000).toISOString().slice(0, 10);
 }
@@ -124,35 +123,46 @@ async function collectOpenings(id: string, start: string, end: string): Promise<
   const openings: Opening[] = [];
   const sites = new Set<string>();
   const visited = new Set<number>();
-  const queue: number[] = [p.mapId];
+  let frontier: number[] = [p.mapId];
   let calls = 0;
+  const CONCURRENCY = 6; // polite parallelism per tree level
+  const MAX_CALLS = 60; // hard ceiling so a deep park can't run away
 
-  while (queue.length && calls < 40) {
-    const mapId = queue.shift()!;
-    if (visited.has(mapId)) continue;
-    visited.add(mapId);
-    calls++;
-    let data: AvailResp;
-    try {
-      data = await getMapAvailability(t.host, mapId, catId, start, end);
-    } catch {
-      continue; // skip a flaky node rather than abort the park
+  // Breadth-first over the map tree, fetching each level concurrently (in
+  // bounded chunks) instead of one node at a time — turns a 3–8s serial walk
+  // into ~1s for typical parks.
+  while (frontier.length && calls < MAX_CALLS) {
+    const level = frontier.filter((m) => !visited.has(m));
+    level.forEach((m) => visited.add(m));
+    const datas: (AvailResp | null)[] = [];
+    for (let i = 0; i < level.length && calls < MAX_CALLS; i += CONCURRENCY) {
+      const chunk = level.slice(i, i + CONCURRENCY);
+      calls += chunk.length;
+      datas.push(
+        ...(await Promise.all(
+          chunk.map((m) => getMapAvailability(t.host, m, catId, start, end).catch(() => null))
+        ))
+      );
     }
-    for (const [resourceId, slots] of Object.entries(data.resourceAvailabilities ?? {})) {
-      const site = `R${resourceId}`;
-      sites.add(site);
-      slots.forEach((slot, i) => {
-        if (slot.availability === 0) {
-          const date = addDays(start, i);
-          if (date <= end) openings.push({ site, date, status: "Available" });
-        }
-      });
+    const next: number[] = [];
+    for (const data of datas) {
+      if (!data) continue;
+      for (const [resourceId, slots] of Object.entries(data.resourceAvailabilities ?? {})) {
+        const site = `R${resourceId}`;
+        sites.add(site);
+        slots.forEach((slot, i) => {
+          if (slot.availability === 0) {
+            const date = addDays(start, i);
+            if (date <= end) openings.push({ site, date, status: "Available" });
+          }
+        });
+      }
+      for (const childId of Object.keys(data.mapLinkAvailabilities ?? {})) {
+        const cid = Number(childId);
+        if (!visited.has(cid)) next.push(cid);
+      }
     }
-    for (const childId of Object.keys(data.mapLinkAvailabilities ?? {})) {
-      const cid = Number(childId);
-      if (!visited.has(cid)) queue.push(cid);
-    }
-    await sleep(80);
+    frontier = next;
   }
 
   return { openings, siteTotal: sites.size };

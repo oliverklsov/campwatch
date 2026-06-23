@@ -8,6 +8,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import TabBar from "@/components/TabBar";
+import BottomSheet from "@/components/BottomSheet";
 import { createClient } from "@/lib/supabase/client";
 import { Protocol as PMTilesProtocol } from "pmtiles";
 
@@ -579,10 +580,10 @@ export default function ExplorePage() {
             </option>
           ))}
         </select>
-        <Chip on={show.reservable} onClick={() => setShow((s) => ({ ...s, reservable: !s.reservable }))}>
+        <Chip on={show.reservable} onClick={() => setShow((s) => ({ ...s, reservable: !s.reservable }))} color={GREEN}>
           ⛺ Reservable
         </Chip>
-        <Chip on={show.fcfs} onClick={() => setShow((s) => ({ ...s, fcfs: !s.fcfs }))}>
+        <Chip on={show.fcfs} onClick={() => setShow((s) => ({ ...s, fcfs: !s.fcfs }))} color={TAN}>
           🏕️ First-come-first-served
         </Chip>
         <Chip on={showDispersed} onClick={() => setShowDispersed((v) => !v)} color={MAGENTA}>
@@ -754,17 +755,7 @@ function Chip({
 function RoadSheet({ road, onClose }: { road: Road; onClose: () => void }) {
   const label = road.name ? (/^[0-9]/.test(road.name) ? `Forest Road ${road.name}` : road.name) : "Forest road";
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
-        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
+    <BottomSheet onClose={onClose}>
       <h3 className="text-lg font-bold">{label}</h3>
       <p className="text-sm" style={{ color: MAGENTA }}>
         Dispersed-camping forest road
@@ -785,7 +776,7 @@ function RoadSheet({ road, onClose }: { road: Road; onClose: () => void }) {
       >
         Directions to this road ↗
       </a>
-    </div>
+    </BottomSheet>
   );
 }
 
@@ -1004,17 +995,7 @@ function SpotSheet({
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
-        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
+    <BottomSheet onClose={onClose}>
 
       <div className="flex items-start justify-between gap-2">
         <div>
@@ -1168,7 +1149,7 @@ function SpotSheet({
         Dispersed sites are user-submitted. Confirm legality (within ~300 ft of an open forest road, no
         closures) on the forest&apos;s MVUM and pack out everything.
       </p>
-    </div>
+    </BottomSheet>
   );
 }
 
@@ -1285,17 +1266,7 @@ function Sheet({
 
   return (
     <>
-      <div className="fixed inset-x-0 bottom-16 z-30 max-h-[72vh] overflow-y-auto rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-        <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
-          <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
-          <button
-            onClick={onClose}
-            className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
+      <BottomSheet onClose={onClose}>
 
         {images.length > 0 && (
           <div className="mb-3 -mx-1 flex gap-2 overflow-x-auto px-1">
@@ -1473,7 +1444,7 @@ function Sheet({
         >
           Open on {av.bookingLabel ?? "recreation.gov"} ↗
         </a>
-      </div>
+      </BottomSheet>
 
       {lightbox && (
         <div
@@ -1622,17 +1593,7 @@ function LotterySheet({ lottery, onClose }: { lottery: Lottery; onClose: () => v
     new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const place = [lottery.area, lottery.state].filter(Boolean).join(", ");
   return (
-    <div className="fixed inset-x-0 bottom-16 z-30 rounded-t-2xl bg-white px-5 pb-5 pt-0 shadow-[0_-8px_30px_rgba(0,0,0,0.18)]">
-      <div className="sticky top-0 z-10 -mx-5 flex items-center justify-between bg-white/95 px-5 pb-2 pt-3 backdrop-blur">
-        <div className="mx-auto h-1 w-10 rounded-full bg-stone-200" />
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-2 rounded-full bg-stone-100 px-2 py-0.5 text-stone-500 hover:bg-stone-200"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
+    <BottomSheet onClose={onClose}>
       <h3 className="text-lg font-bold">{lottery.name}</h3>
       <p className="text-sm" style={{ color: BLUE }}>
         🎟️ Permit lottery{place ? ` · ${place}` : ""}
@@ -1665,6 +1626,6 @@ function LotterySheet({ lottery, onClose }: { lottery: Lottery; onClose: () => v
       >
         Follow for reminders
       </a>
-    </div>
+    </BottomSheet>
   );
 }
