@@ -2,11 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import SignOutButton from "@/components/SignOutButton";
+import { SITE_URL } from "@/lib/seo";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "Yonder — campsite alerts & dispersed camping",
   description:
     "Get alerted the moment a campsite opens up, browse free dispersed camping, and never miss a permit lottery or booking window.",
+  openGraph: { siteName: "Yonder", type: "website" },
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
