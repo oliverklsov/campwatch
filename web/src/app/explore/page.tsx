@@ -108,6 +108,7 @@ type Avail = {
   bookableSites?: number;
   openSites?: number;
   siteNightDates?: { date: string; count: number; status?: string }[];
+  siteAvailability?: { site: string; dates: { date: string; status?: string }[] }[];
   bookingUrl?: string;
   bookingLabel?: string;
 };
@@ -1199,6 +1200,7 @@ function Sheet({
   const [av, setAv] = useState<Avail>({ loading: true });
   const [images, setImages] = useState<{ url: string; title: string }[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [showSites, setShowSites] = useState(false);
 
   // Availability re-fetches whenever the pin or the chosen date range changes.
   useEffect(() => {
@@ -1385,6 +1387,50 @@ function Sheet({
             </p>
           )}
         </div>
+
+        {!av.loading && av.siteAvailability && av.siteAvailability.length > 0 && (
+          <div className="mb-3">
+            <button
+              onClick={() => setShowSites((v) => !v)}
+              className="text-sm font-medium text-green-700 hover:underline"
+              aria-expanded={showSites}
+            >
+              {showSites ? "▾ Hide" : "▸ Show"} {av.siteAvailability.length} available site
+              {av.siteAvailability.length !== 1 ? "s" : ""} by night
+            </button>
+            {showSites && (
+              <ul className="mt-2 max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                {av.siteAvailability.map((s) => (
+                  <li
+                    key={s.site}
+                    className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-stone-100 pb-1.5"
+                  >
+                    <span className="text-sm font-medium text-stone-800">{s.site}</span>
+                    <span className="flex flex-wrap gap-1">
+                      {s.dates.map((d) => (
+                        <span
+                          key={d.date}
+                          className={`rounded px-1.5 py-0.5 text-xs ${
+                            d.status === "Open" ? "bg-orange-50 text-orange-800" : "bg-green-50 text-green-800"
+                          }`}
+                        >
+                          {d.date.slice(5)}
+                        </span>
+                      ))}
+                    </span>
+                    <a
+                      href={`${watchHref}&sites=${encodeURIComponent(s.site)}`}
+                      className="ml-auto whitespace-nowrap text-xs font-medium text-green-700 hover:underline"
+                      title={`Watch site ${s.site}`}
+                    >
+                      🔔 watch
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {release && release.windowMonths != null && av.resType === "reservable" && (
           <div className="mb-3 rounded-lg bg-stone-50 px-3 py-2 text-sm">

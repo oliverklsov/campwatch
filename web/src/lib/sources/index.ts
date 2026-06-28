@@ -86,6 +86,9 @@ export type AvailabilityResult = {
   bookableSites: number;
   openSites: number;
   siteNightDates: { date: string; count: number; status: "Available" | "Open" }[];
+  // Per actual campsite: which nights in the window it's open. Real site names
+  // for recreation.gov + US eDirect; resource ids for Camis.
+  siteAvailability: { site: string; dates: { date: string; status: "Available" | "Open" }[] }[];
   bookingUrl: string;
   bookingLabel: string;
   error?: string;
@@ -103,7 +106,10 @@ export function aggregate(
   start: string,
   end: string,
   openings: Opening[]
-): Pick<AvailabilityResult, "totalOpenings" | "bookable" | "fcfs" | "bookableSites" | "openSites" | "siteNightDates"> {
+): Pick<
+  AvailabilityResult,
+  "totalOpenings" | "bookable" | "fcfs" | "bookableSites" | "openSites" | "siteNightDates" | "siteAvailability"
+> {
   const byDate: Record<string, { count: number; available: number; open: number }> = {};
   for (const o of openings) {
     const e = (byDate[o.date] ??= { count: 0, available: 0, open: 0 });
@@ -114,6 +120,20 @@ export function aggregate(
   const siteNightDates = Object.entries(byDate)
     .map(([date, v]) => ({ date, count: v.count, status: (v.available > 0 ? "Available" : "Open") as "Available" | "Open" }))
     .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Per-site breakdown: each site open on >=1 night in the window, with the
+  // specific nights it's available (capped to keep the payload bounded).
+  const bySite = new Map<string, { date: string; status: "Available" | "Open" }[]>();
+  for (const o of openings) {
+    const arr = bySite.get(o.site) ?? [];
+    arr.push({ date: o.date, status: o.status });
+    bySite.set(o.site, arr);
+  }
+  const siteAvailability = [...bySite.entries()]
+    .map(([site, dates]) => ({ site, dates: dates.sort((a, b) => a.date.localeCompare(b.date)) }))
+    .sort((a, b) => a.site.localeCompare(b.site, undefined, { numeric: true }))
+    .slice(0, 100);
+
   return {
     totalOpenings: openings.length,
     bookable: openings.filter((o) => o.status === "Available").length,
@@ -121,6 +141,7 @@ export function aggregate(
     bookableSites: new Set(openings.filter((o) => o.status === "Available").map((o) => o.site)).size,
     openSites: new Set(openings.filter((o) => o.status === "Open").map((o) => o.site)).size,
     siteNightDates,
+    siteAvailability,
   };
 }
 
@@ -167,6 +188,7 @@ export async function getAvailability(id: string, start: string, end: string): P
         bookableSites: 0,
         openSites: 0,
         siteNightDates: [],
+        siteAvailability: [],
         bookingUrl,
         bookingLabel,
         error: e instanceof Error ? e.message : "availability fetch failed",
@@ -207,6 +229,7 @@ export async function getAvailability(id: string, start: string, end: string): P
       bookableSites: 0,
       openSites: 0,
       siteNightDates: [],
+      siteAvailability: [],
       bookingUrl,
       bookingLabel,
       error: e instanceof Error ? e.message : "availability fetch failed",

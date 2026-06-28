@@ -51,5 +51,11 @@ describe("aggregate", () => {
       { date: "2026-07-10", count: 2, status: "Available" },
       { date: "2026-07-11", count: 1, status: "Open" },
     ]);
+    // Per-site breakdown: each site with the specific nights it's open, sorted.
+    expect(r.siteAvailability).toEqual([
+      { site: "A1", dates: [{ date: "2026-07-10", status: "Available" }] },
+      { site: "A2", dates: [{ date: "2026-07-10", status: "Available" }] },
+      { site: "B1", dates: [{ date: "2026-07-11", status: "Open" }] },
+    ]);
   });
 });

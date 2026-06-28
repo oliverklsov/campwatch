@@ -34,6 +34,8 @@ export default function NewWatch() {
     const e = p.get("end");
     if (s) setStart(s);
     if (e) setEnd(e);
+    const sitesParam = p.get("sites");
+    if (sitesParam) setSites(sitesParam);
   }, []);
 
   useEffect(() => {
