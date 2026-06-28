@@ -21,3 +21,10 @@ export function stateName(code?: string | null): string {
   if (!code) return "";
   return US_STATES[code.toUpperCase()] || code;
 }
+
+// Popular camping states surfaced in the footer (all have recreation.gov data,
+// so their /camping/<state> hubs always resolve). The sitemap covers the rest.
+export const FOOTER_STATES = [
+  "CA", "CO", "AZ", "UT", "OR", "WA", "MT", "WY", "ID", "NM", "NV", "TX",
+  "FL", "NC", "TN", "NY", "PA", "ME", "MI", "MN", "WI", "VA", "OH", "MO",
+];

@@ -1444,6 +1444,12 @@ function Sheet({
         >
           Open on {av.bookingLabel ?? "recreation.gov"} ↗
         </a>
+        <a
+          href={`/campground/${encodeURIComponent(sel.id)}`}
+          className="mt-2 block w-full py-2 text-center text-sm font-medium text-stone-500 hover:text-stone-700 hover:underline"
+        >
+          Campground page &amp; reviews →
+        </a>
       </BottomSheet>
 
       {lightbox && (

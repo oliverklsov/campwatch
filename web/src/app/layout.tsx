@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import SignOutButton from "@/components/SignOutButton";
-import { SITE_URL } from "@/lib/seo";
+import { SITE_URL, stateName, FOOTER_STATES } from "@/lib/seo";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -47,6 +48,30 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </div>
         </header>
         <main className="mx-auto max-w-4xl px-4 py-8">{children}</main>
+        <footer className="border-t border-stone-200 bg-white">
+          <div className="mx-auto max-w-4xl px-4 py-8 pb-24 text-sm text-stone-500 md:pb-8">
+            <p className="mb-3 font-semibold text-stone-700">Camping by state</p>
+            <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
+              {FOOTER_STATES.map((code) => (
+                <li key={code}>
+                  <Link href={`/camping/${code.toLowerCase()}`} className="hover:text-stone-700 hover:underline">
+                    {stateName(code)}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-6 text-xs text-stone-400">
+              © Yonder ·{" "}
+              <Link href="/explore" className="hover:underline">
+                Explore the map
+              </Link>{" "}
+              ·{" "}
+              <Link href="/lotteries" className="hover:underline">
+                Permit lotteries
+              </Link>
+            </p>
+          </div>
+        </footer>
       </body>
     </html>
   );
