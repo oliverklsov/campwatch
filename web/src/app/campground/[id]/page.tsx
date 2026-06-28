@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createServiceClient } from "@/lib/supabase/server";
 import { bookingUrlForFacility, bookingLabelForFacility } from "@/lib/sources";
 import { SITE_URL, stateName } from "@/lib/seo";
+import { hipcampSearchUrl, koaUrl, AFFILIATE_REL } from "@/lib/affiliates";
 
 type Facility = {
   facility_id: string;
@@ -156,6 +157,33 @@ export default async function CampgroundPage({ params }: { params: { id: string 
           </a>
         )}
       </div>
+
+      <section className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+        <h2 className="text-base font-bold">Nearby private &amp; RV camping</h2>
+        <p className="mt-1 text-sm text-stone-600">
+          Booked up, or want more options near {f.city || stateName(f.state) || "here"}? Browse private
+          land, glamping, and RV parks:
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a
+            href={hipcampSearchUrl({ city: f.city, state: f.state, name: f.name })}
+            target="_blank"
+            rel={AFFILIATE_REL}
+            className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-stone-100"
+          >
+            Hipcamp private sites ↗
+          </a>
+          <a
+            href={koaUrl()}
+            target="_blank"
+            rel={AFFILIATE_REL}
+            className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-stone-100"
+          >
+            KOA campgrounds ↗
+          </a>
+        </div>
+        <p className="mt-2 text-xs text-stone-400">Yonder may earn a commission from these partners.</p>
+      </section>
 
       <section>
         <h2 className="text-xl font-bold">Camper reviews</h2>

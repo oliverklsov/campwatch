@@ -9,6 +9,7 @@ import maplibregl, {
 import "maplibre-gl/dist/maplibre-gl.css";
 import TabBar from "@/components/TabBar";
 import BottomSheet from "@/components/BottomSheet";
+import { hipcampSearchUrl, koaUrl } from "@/lib/affiliates";
 import { createClient } from "@/lib/supabase/client";
 import { Protocol as PMTilesProtocol } from "pmtiles";
 
@@ -1496,6 +1497,26 @@ function Sheet({
         >
           Campground page &amp; reviews →
         </a>
+        <p className="mt-2 text-center text-xs text-stone-400">
+          Nearby private camping:{" "}
+          <a
+            href={hipcampSearchUrl({ city: sel.city, state: sel.state, name: sel.name })}
+            target="_blank"
+            rel="sponsored noopener noreferrer"
+            className="font-medium text-green-700 hover:underline"
+          >
+            Hipcamp
+          </a>{" "}
+          ·{" "}
+          <a
+            href={koaUrl()}
+            target="_blank"
+            rel="sponsored noopener noreferrer"
+            className="font-medium text-green-700 hover:underline"
+          >
+            KOA
+          </a>
+        </p>
       </BottomSheet>
 
       {lightbox && (
