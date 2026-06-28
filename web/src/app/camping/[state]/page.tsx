@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -16,23 +17,28 @@ export async function generateMetadata({ params }: { params: { state: string } }
   return { title, description, alternates: { canonical: url }, openGraph: { title, description, url } };
 }
 
-async function getFacilities(code: string): Promise<Row[]> {
-  const db = createServiceClient();
-  const rows: Row[] = [];
-  const PAGE = 1000;
-  for (let from = 0; from < 20000; from += PAGE) {
-    const { data, error } = await db
-      .from("facilities")
-      .select("facility_id, name, city, reservable")
-      .eq("state", code)
-      .order("name")
-      .range(from, from + PAGE - 1);
-    if (error || !data || data.length === 0) break;
-    rows.push(...(data as Row[]));
-    if (data.length < PAGE) break;
-  }
-  return rows;
-}
+// Cached for an hour so repeated crawls of a state hub don't re-query the DB.
+const getFacilities = unstable_cache(
+  async (code: string): Promise<Row[]> => {
+    const db = createServiceClient();
+    const rows: Row[] = [];
+    const PAGE = 1000;
+    for (let from = 0; from < 20000; from += PAGE) {
+      const { data, error } = await db
+        .from("facilities")
+        .select("facility_id, name, city, reservable")
+        .eq("state", code)
+        .order("name")
+        .range(from, from + PAGE - 1);
+      if (error || !data || data.length === 0) break;
+      rows.push(...(data as Row[]));
+      if (data.length < PAGE) break;
+    }
+    return rows;
+  },
+  ["camping-state"],
+  { revalidate: 3600 }
+);
 
 export default async function StatePage({ params }: { params: { state: string } }) {
   const code = params.state.toUpperCase();

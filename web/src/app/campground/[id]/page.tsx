@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -19,18 +20,25 @@ type Facility = {
 };
 type Review = { stars: number | null; comment: string | null; created_at: string };
 
-async function getData(id: string): Promise<{ f: Facility; reviews: Review[] } | null> {
-  const db = createServiceClient();
-  const { data: f } = await db.from("facilities").select("*").eq("facility_id", id).maybeSingle();
-  if (!f) return null;
-  const { data: reviews } = await db
-    .from("campground_reviews")
-    .select("stars, comment, created_at")
-    .eq("facility_id", id)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  return { f: f as Facility, reviews: (reviews ?? []) as Review[] };
-}
+// Cache per facility for an hour so crawlers hitting thousands of pages don't
+// re-query the DB (and cold renders stay snappy). Page is still dynamic (the
+// header reads auth cookies), but the data fetch is memoized across requests.
+const getData = unstable_cache(
+  async (id: string): Promise<{ f: Facility; reviews: Review[] } | null> => {
+    const db = createServiceClient();
+    const { data: f } = await db.from("facilities").select("*").eq("facility_id", id).maybeSingle();
+    if (!f) return null;
+    const { data: reviews } = await db
+      .from("campground_reviews")
+      .select("stars, comment, created_at")
+      .eq("facility_id", id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    return { f: f as Facility, reviews: (reviews ?? []) as Review[] };
+  },
+  ["campground-detail"],
+  { revalidate: 3600 }
+);
 
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
   const data = await getData(params.id);
